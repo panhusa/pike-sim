@@ -1,10 +1,16 @@
-import { calibrate, joystickToInput, tiltToRates, type TiltCal } from "./tilt";
+import { calibrate, stickToInput, tiltToRates, type TiltCal } from "./tilt";
 
 export type ControlMode = "tilt" | "joystick";
 /** `level`: no pitch control (joystick), the caller steers the pike back to level instead. */
 export interface TouchInput { yawRate: number; pitchRate: number; throttle: number; burst: boolean; rest: boolean; level: boolean }
+/** What the joystick needs to turn screen directions into a heading. */
+export interface StickContext {
+  yaw: number;
+  pitch: number;
+  camYaw: number;
+}
 export interface TouchControls {
-  read(): TouchInput;
+  read(ctx?: StickContext): TouchInput;
   setStrikeReady(on: boolean): void;
   recentre(): void;
   dispose(): void;
@@ -143,13 +149,19 @@ export function mountTouchControls(
   const rest = el("div", "touch-btn touch-rest", "Rest");
   let restHeld = false;
   hold(rest, () => (restHeld = true), () => (restHeld = false));
+  // depth buttons (joystick mode): hold to rise or dive, let go to level out
+  let vertical: -1 | 0 | 1 = 0;
+  const rise = el("div", "touch-btn touch-rise", "\u25B2");
+  const dive = el("div", "touch-btn touch-dive", "\u25BC");
+  hold(rise, () => (vertical = 1), () => vertical === 1 && (vertical = 0));
+  hold(dive, () => (vertical = -1), () => vertical === -1 && (vertical = 0));
   const recentreBtn = el("div", "touch-btn touch-recentre", "Recentre");
   recentreBtn.addEventListener("pointerdown", () => recentre());
   const pauseBtn = el("div", "touch-btn touch-pause", "Pause");
   pauseBtn.addEventListener("pointerdown", () => opts.onPause());
   const camBtn = el("div", "touch-btn touch-cam", "Cam");
   camBtn.addEventListener("pointerdown", () => opts.onCamera?.());
-  layer.append(swim, strike, rest, recentreBtn, pauseBtn, camBtn, stick);
+  layer.append(swim, strike, rest, recentreBtn, pauseBtn, camBtn, rise, dive, stick);
 
   const applyMode = (): void => {
     layer.classList.toggle("mode-joystick", mode === "joystick");
@@ -184,15 +196,15 @@ export function mountTouchControls(
   root.append(layer);
 
   return {
-    read(): TouchInput {
+    read(ctx?: StickContext): TouchInput {
       let yawRate = 0;
       let pitchRate = 0;
       let throttle = 0;
       if (mode === "tilt") {
         ({ yawRate, pitchRate } = tilt);
         if (swimSince >= 0) throttle = swimLow || performance.now() - swimSince < SHORT_PRESS_MS ? 0.25 : 1;
-      } else ({ yawRate, pitchRate, throttle } = joystickToInput(stickVec.x, stickVec.y));
-      const out = { yawRate, pitchRate, throttle, burst, rest: restHeld, level: mode === "joystick" };
+      } else if (ctx) ({ yawRate, pitchRate, throttle } = stickToInput(stickVec.x, stickVec.y, ctx, ctx.camYaw, vertical));
+      const out = { yawRate, pitchRate, throttle, burst, rest: restHeld, level: mode === "joystick" && !ctx };
       burst = false;
       return out;
     },

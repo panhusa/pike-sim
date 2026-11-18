@@ -56,12 +56,26 @@ export function tiltToRates(beta: number, gamma: number, cal: TiltCal, deadDeg =
   return { yawRate: rate(p.roll - cal.roll0, deadDeg, fullDeg), pitchRate: rate(wrap(p.pitch - cal.pitch0), deadDeg, fullDeg) };
 }
 
-/** Joystick: x steers, distance from centre sets throttle. It never pitches (the caller levels the pike). */
-export function joystickToInput(dx: number, dy: number): { yawRate: number; pitchRate: 0; throttle: number } {
-  const r0 = Math.hypot(dx, dy);
-  const k = r0 > 1 ? 1 / r0 : 1;
-  const x = dx * k;
-  const r = Math.min(1, r0);
-  if (r < 0.15) return { yawRate: 0, pitchRate: 0, throttle: 0 };
-  return { yawRate: x, pitchRate: 0, throttle: r < 0.5 ? 0.25 : 1 };
+/**
+ * Joystick, camera-relative: the stick points where to swim on screen (up = away from the camera,
+ * left/right = that way, down = turn around); distance from centre sets speed smoothly. Depth is
+ * separate: `vertical` +1 (Rise held) / -1 (Dive held) / 0 aims the nose up, down or level.
+ * Yaw convention: increasing yaw turns right, and atan2(z, x) gives a heading.
+ */
+export function stickToInput(
+  dx: number,
+  dy: number,
+  pike: { yaw: number; pitch: number },
+  camYaw: number,
+  vertical: -1 | 0 | 1,
+): { yawRate: number; pitchRate: number; throttle: number } {
+  const r = Math.min(1, Math.hypot(dx, dy));
+  const pitchRate = Math.max(-1, Math.min(1, (vertical * 0.6 - pike.pitch) * 3));
+  if (r < STICK_DEAD) return { yawRate: 0, pitchRate, throttle: vertical !== 0 ? 0.35 : 0 }; // rising/diving needs a little way on
+  const want = camYaw + Math.atan2(dx, -dy);
+  const err = Math.atan2(Math.sin(want - pike.yaw), Math.cos(want - pike.yaw));
+  const yawRate = Math.max(-1, Math.min(1, err * 2.5));
+  const speed = 0.15 + 0.85 * ((r - STICK_DEAD) / (1 - STICK_DEAD));
+  return { yawRate, pitchRate, throttle: speed * (Math.abs(err) > 1.8 ? 0.55 : 1) }; // ease off to turn round tightly
 }
+export const STICK_DEAD = 0.12;

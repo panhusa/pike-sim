@@ -65,6 +65,15 @@ export class CameraRig {
     return this.pos;
   }
 
+  /**
+   * The heading the joystick treats as "up": the pike's smoothed heading, without the camera's side
+   * angle or orbit. Using the camera's own forward would make a side-on camera turn the pike, the
+   * camera follow, and the pike spiral.
+   */
+  get heading(): number {
+    return this.camYaw;
+  }
+
   /** The player's own mesh is hidden in the eye view. */
   get hidesPlayer(): boolean {
     return this.mode === "eye";
@@ -93,6 +102,7 @@ export class CameraRig {
       this.cam.position.copy(this.pos);
       this.lookAt.set(this.pos.x + Math.cos(yaw) * Math.cos(pitch), this.pos.y + Math.sin(pitch), this.pos.z + Math.sin(yaw) * Math.cos(pitch));
       this.cam.lookAt(this.lookAt);
+      this.camYaw = player.yaw;
       this.init = false;
       return;
     }

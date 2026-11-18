@@ -161,6 +161,13 @@ function mountTouch(permission?: Promise<boolean>): void {
 }
 const motionPermission = (): Promise<boolean> | undefined => (touchOn && controlMode === "tilt" ? requestMotionPermission() : undefined);
 
+/** The pike's attitude and the camera's tracked heading, so the joystick steers relative to the view. */
+function stickContext(): { yaw: number; pitch: number; camYaw: number } | undefined {
+  const pl = sim?.player();
+  if (!pl || !view) return undefined;
+  return { yaw: pl.yaw, pitch: pl.pitch, camYaw: view.rig.heading };
+}
+
 function playerInput(pl: PikeState): PikeInput {
   const kbThrottle = keys.has("KeyW") || keys.has("ArrowUp") ? (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.25 : 1) : 0;
   const burst = burstQueued || !!touchIn?.burst;
@@ -170,8 +177,10 @@ function playerInput(pl: PikeState): PikeInput {
     // joystick: no pitch axis, so the pike levels out (as the desktop mouse does at wantPitch 0)
     const pitchRate = touchIn.level ? clamp(-pl.pitch * 3, -1, 1) : touchIn.pitchRate;
     // keep the camera lead (render uses wantYaw/wantPitch) consistent with the touch-driven turn
-    wantYaw = pl.yaw + touchIn.yawRate / 3;
-    wantPitch = clamp(pl.pitch + pitchRate / 3, -0.9, 0.9);
+    // tilt: the camera leads into the turn; joystick: the stick is camera-relative, so a leading camera would chase itself
+    const lead = controlMode === "joystick" ? 0 : 1 / 3;
+    wantYaw = pl.yaw + touchIn.yawRate * lead;
+    wantPitch = clamp(pl.pitch + pitchRate * lead, -0.9, 0.9);
     return { throttle: Math.max(kbThrottle, touchIn.throttle), yawRate: touchIn.yawRate, pitchRate, burst };
   }
   if (pl.lockId !== null) {
@@ -521,7 +530,7 @@ function die(noOffspring = false, persist = true): void {
 // --- main loop ---
 function simulate(s: Simulation, pl: PikeState, frameDt: number): string {
   let blockedText = "";
-  touchIn = touch?.read() ?? null;
+  touchIn = touch?.read(stickContext()) ?? null;
   if (touchIn && !touchIn.rest) restLatch = false;
   if ((keys.has("KeyR") || touchIn?.rest) && !restLatch && net) blockedText = "No resting in a shared lake";
   else if ((keys.has("KeyR") || touchIn?.rest) && !restLatch) {
@@ -627,7 +636,7 @@ function frame(now: number): void {
     const alive = !!sim.player()?.alive;
     if (net?.kind === "guest") {
       // the host simulates; the guest predicts its own pike and smooths the rest
-      touchIn = touch?.read() ?? null;
+      touchIn = touch?.read(stickContext()) ?? null;
       const me = sim.player();
       net.guest.frame(frameDt, me && mode === "playing" ? playerInput(me) : { throttle: 0, yawRate: 0, pitchRate: 0, burst: false });
       net.guest.reportScore(game.points, frameDt);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calibrate, joystickToInput, tiltToRates, type TiltCal } from "../src/ui/tilt";
+import { calibrate, stickToInput, tiltToRates, type TiltCal } from "../src/ui/tilt";
 
 const RAD = Math.PI / 180;
 /**
@@ -125,23 +125,42 @@ describe("tiltToRates", () => {
   });
 });
 
-describe("joystickToInput", () => {
-  it("has a dead zone below 0.15", () => {
-    expect(joystickToInput(0.1, 0.05)).toEqual({ yawRate: 0, pitchRate: 0, throttle: 0 });
+describe("stickToInput (camera-relative joystick)", () => {
+  const level = { yaw: 0, pitch: 0 };
+  it("has a dead zone and holds level when idle", () => {
+    expect(stickToInput(0.05, 0.05, level, 0, 0)).toEqual({ yawRate: 0, pitchRate: 0, throttle: 0 });
   });
-  it("stalks below 0.5, full throttle above", () => {
-    expect(joystickToInput(0.3, 0).throttle).toBe(0.25);
-    expect(joystickToInput(0.8, 0).throttle).toBe(1);
+  it("stick up swims straight on when the camera looks along the pike", () => {
+    const r = stickToInput(0, -1, level, 0, 0);
+    expect(r.yawRate).toBeCloseTo(0);
+    expect(r.throttle).toBeCloseTo(1);
   });
-  it("steers right with positive x", () => {
-    expect(joystickToInput(0.8, 0).yawRate).toBeGreaterThan(0);
-    expect(joystickToInput(-0.8, 0).yawRate).toBeLessThan(0);
+  it("speed rises smoothly with stick distance", () => {
+    const a = stickToInput(0, -0.3, level, 0, 0).throttle;
+    const b = stickToInput(0, -0.6, level, 0, 0).throttle;
+    expect(a).toBeGreaterThan(0.15);
+    expect(b).toBeGreaterThan(a);
+    expect(b).toBeLessThan(1);
   });
-  it("normalises vectors beyond the unit circle", () => {
-    expect(joystickToInput(3, 0)).toEqual({ yawRate: 1, pitchRate: 0, throttle: 1 });
+  it("right turns right, left turns left", () => {
+    expect(stickToInput(1, 0, level, 0, 0).yawRate).toBeGreaterThan(0);
+    expect(stickToInput(-1, 0, level, 0, 0).yawRate).toBeLessThan(0);
   });
-  it("never pitches: full up or down swims level at full throttle", () => {
-    expect(joystickToInput(0, -1)).toEqual({ yawRate: 0, pitchRate: 0, throttle: 1 });
-    expect(joystickToInput(0, 1)).toEqual({ yawRate: 0, pitchRate: 0, throttle: 1 });
+  it("stick down turns the pike round and eases off, instead of swimming on", () => {
+    const r = stickToInput(0.01, 1, level, 0, 0);
+    expect(Math.abs(r.yawRate)).toBe(1);
+    expect(r.throttle).toBeLessThan(0.6);
+  });
+  it("is relative to the camera, not to the pike", () => {
+    // camera looking along +90 deg while the pike points along 0: stick up means turn right toward +90
+    expect(stickToInput(0, -1, level, Math.PI / 2, 0).yawRate).toBeGreaterThan(0);
+  });
+  it("Rise / Dive aim the nose up / down, and release levels out", () => {
+    expect(stickToInput(0, -1, level, 0, 1).pitchRate).toBeGreaterThan(0);
+    expect(stickToInput(0, -1, level, 0, -1).pitchRate).toBeLessThan(0);
+    expect(stickToInput(0, -1, { yaw: 0, pitch: 0.5 }, 0, 0).pitchRate).toBeLessThan(0);
+  });
+  it("rising or diving from a standstill gives a little way on", () => {
+    expect(stickToInput(0, 0, level, 0, -1).throttle).toBeGreaterThan(0);
   });
 });
