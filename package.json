@@ -1,0 +1,24 @@
+{
+  "name": "pike-sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "calibrate": "CALIBRATE=1 vitest run tests/calibration.test.ts -t \"pooled 15-seed gate\"",
+    "headless": "tsx src/sim/headless.ts"
+  },
+  "dependencies": {
+    "peerjs": "^1.5.4",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

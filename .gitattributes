@@ -1,0 +1,4 @@
+# Not part of the public export (scripts/publish-github.sh uses git archive)
+docs/superpowers export-ignore
+sync.sh export-ignore
+scripts/publish-github.sh export-ignore
