@@ -31,6 +31,17 @@ function controlsRow(c: ControlsPref): HTMLElement {
   return h("label", {}, "Controls ", sel);
 }
 
+/** Desktop mouse preference: inverted = flight style (push the mouse forward to dive). */
+export interface MousePref {
+  invertY: boolean;
+  onChange(invertY: boolean): void;
+}
+function mouseRow(m: MousePref): HTMLElement {
+  const box = h("input", { type: "checkbox", checked: m.invertY });
+  box.addEventListener("change", () => m.onChange(box.checked));
+  return h("label", {}, box, " Invert mouse (push forward to dive, pull back to rise)");
+}
+
 export type SaveSlot = { kind: "none" } | { kind: "ok"; sim: Simulation } | { kind: "bad"; text: string };
 
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
@@ -156,6 +167,7 @@ export interface StartHandlers {
   onNew(c: NewLifeConfig): void;
   onDownload(text: string): void;
   controls?: ControlsPref; // touch devices only
+  mouse?: MousePref; // desktop only
 }
 
 export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: boolean, hd: StartHandlers, defaultSeed?: number): void {
@@ -169,6 +181,7 @@ export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: b
   if (hd.controls) keysLine.textContent = "Joystick: steer and swim (push further to go faster). Strike to lunge, hold Rest when still in cover, Cam to change the view. Tilt steering can be picked below.";
   kids.push(keysLine);
   if (hd.controls) kids.push(controlsRow(hd.controls));
+  if (hd.mouse) kids.push(mouseRow(hd.mouse));
   if (!storageAvailable) kids.push(p("Progress will not be saved in this browser", "warn"));
   if (slot.kind === "ok") {
     const s = slot.sim;
@@ -217,8 +230,8 @@ export function showDeath(
   mount(root, ...kids);
 }
 
-export function showPause(root: HTMLElement, milestones: MilestoneId[], onResume: () => void, onMenu: () => void, controls?: ControlsPref, online?: string): void {
+export function showPause(root: HTMLElement, milestones: MilestoneId[], onResume: () => void, onMenu: () => void, controls?: ControlsPref, online?: string, mouse?: MousePref): void {
   const title = online ? "Menu" : "Paused";
   const note = online ? [p(`${online} The lake keeps going while this menu is open.`)] : [];
-  mount(root, h("h1", { textContent: title }), ...note, ...(controls ? [controlsRow(controls)] : []), h("h2", { textContent: "Milestones" }), milestoneList(milestones), button("Resume", onResume), button(online ? "Leave the lake" : "Save and return to menu", onMenu, "secondary"));
+  mount(root, h("h1", { textContent: title }), ...note, ...(controls ? [controlsRow(controls)] : []), ...(mouse ? [mouseRow(mouse)] : []), h("h2", { textContent: "Milestones" }), milestoneList(milestones), button("Resume", onResume), button(online ? "Leave the lake" : "Save and return to menu", onMenu, "secondary"));
 }

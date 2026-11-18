@@ -98,6 +98,27 @@ let eventCursor = 0;
 let lastDay = 0;
 
 // --- input: the mouse sets a desired heading, the body turns toward it at its own rate ---
+const INVERT_KEY = "pike.invertMouse.v1";
+let invertMouse = (() => {
+  try {
+    return localStorage.getItem(INVERT_KEY) === "1";
+  } catch {
+    return false;
+  }
+})();
+const mousePref = {
+  get invertY() {
+    return invertMouse;
+  },
+  onChange(v: boolean) {
+    invertMouse = v;
+    try {
+      localStorage.setItem(INVERT_KEY, v ? "1" : "0");
+    } catch {
+      /* storage blocked: applies for this visit only */
+    }
+  },
+};
 const keys = new Set<string>();
 let wantYaw = 0;
 let wantPitch = 0;
@@ -129,7 +150,7 @@ canvas.addEventListener("mousedown", () => {
 addEventListener("mousemove", (e) => {
   if (mode !== "playing" || document.pointerLockElement !== canvas) return;
   wantYaw += e.movementX * 0.0025;
-  wantPitch = clamp(wantPitch - e.movementY * 0.0025, -0.9, 0.9);
+  wantPitch = clamp(wantPitch - e.movementY * 0.0025 * (invertMouse ? -1 : 1), -0.9, 0.9);
 });
 canvas.addEventListener("click", () => {
   if (mode === "playing" && !touchOn && document.pointerLockElement !== canvas) lockPointer();
@@ -442,6 +463,7 @@ function openMenu(): void {
       },
       controls: controlsPref,
       online: { name: myName, onHost: hostGame, onJoin: joinGame },
+      mouse: touchOn ? undefined : mousePref,
     },
     seed === null ? undefined : Number(seed),
   );
@@ -470,6 +492,7 @@ function pause(): void {
     },
     controlsPref,
     net ? (net.kind === "host" ? `You are hosting lake ${net.host.code}.` : "You are in a friend's lake.") : undefined,
+    touchOn ? undefined : mousePref,
   );
 }
 

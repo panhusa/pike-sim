@@ -15,7 +15,7 @@ are generated in code. There are no image or model files.
   A bite costs one of your three hearts; hearts come back over time.
 
 **Desktop:** mouse steer · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
-`C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu
+`C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu. "Invert mouse" (start screen or menu) makes pushing the mouse forward dive.
 
 **Phone:** joystick to steer and swim (push further to go faster) · Strike · Rest · Cam · Pause.
 Tilt steering can be chosen on the start screen.
