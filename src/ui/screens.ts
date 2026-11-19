@@ -243,7 +243,7 @@ export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: b
     p("Chase fish until their ring turns green, then strike. Chain catches for combos and grow through the stages. In Chill you just swim; in Challenge big pike and anglers are out to get you."),
   ];
   const keysLine = h("p", {});
-  keysLine.innerHTML = "<kbd>Mouse</kbd> steer &nbsp; <kbd>W</kbd> swim &nbsp; <kbd>Shift</kbd>+<kbd>W</kbd> stalk slowly &nbsp; <kbd>Space</kbd> / click strike &nbsp; <kbd>R</kbd> rest (in cover, when still) &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>Wheel</kbd> zoom &nbsp; <kbd>Q</kbd>/<kbd>E</kbd> orbit &nbsp; <kbd>V</kbd> reset view &nbsp; <kbd>N</kbd> minimap &nbsp; <kbd>H</kbd> all controls";
+  keysLine.innerHTML = "<kbd>Mouse</kbd> steer &nbsp; <kbd>A</kbd>/<kbd>D</kbd> turn &nbsp; <kbd>W</kbd> swim &nbsp; <kbd>Shift</kbd>+<kbd>W</kbd> stalk slowly &nbsp; <kbd>Space</kbd> / click strike &nbsp; <kbd>R</kbd> rest (in cover, when still) &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>Wheel</kbd> zoom &nbsp; <kbd>Q</kbd>/<kbd>E</kbd> orbit &nbsp; <kbd>V</kbd> reset view &nbsp; <kbd>N</kbd> minimap &nbsp; <kbd>H</kbd> all controls";
   if (hd.controls) keysLine.textContent = "Joystick: steer and swim (push further to go faster). Strike to lunge, hold Rest when still in cover, Cam to change the view. Tilt steering can be picked below.";
   kids.push(keysLine);
   if (hd.controls) kids.push(controlsRow(hd.controls));

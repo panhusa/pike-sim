@@ -257,6 +257,19 @@ describe("camera rig", () => {
     expect(dist("close")).toBeLessThan(dist("chase"));
     expect(dist("chase")).toBeLessThan(dist("wide"));
   });
+  it("chase pulls back during a burst and sits above the pike (three-quarter view)", () => {
+    const run = (burstTimeLeft: number) => {
+      const cam = new THREE.PerspectiveCamera();
+      const rig = new CameraRig(cam);
+      const pk = { pos: { x: 0, y: -2, z: 0 }, yaw: 0, pitch: 0, speed: 0, lengthCm: 22, burstTimeLeft } as never;
+      for (let i = 0; i < 120; i++) rig.update(pk, { yaw: 0, pitch: 0 }, world, 1 / 60);
+      return cam.position.clone();
+    };
+    const calm = run(0);
+    expect(run(1).distanceTo(new THREE.Vector3(0, -2, 0))).toBeGreaterThan(calm.distanceTo(new THREE.Vector3(0, -2, 0)) * 1.15);
+    expect(calm.y).toBeGreaterThan(-2 + 0.15); // looking down on the back
+    expect(Math.abs(calm.z)).toBeGreaterThan(0.1); // off to one side, not dead behind
+  });
   it("cycles through every mode and back", () => {
     const rig = new CameraRig(new THREE.PerspectiveCamera());
     const seen = CAMERA_MODES.map(() => rig.next());

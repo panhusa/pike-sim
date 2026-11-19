@@ -35,7 +35,8 @@ interface ModeSpec {
 }
 
 const SPECS: Record<Exclude<CameraMode, "eye">, ModeSpec> = {
-  chase: { distBL: 3.2, minM: 0.6, elev: 0.22, angle: 0.2, yawFollow: 2.5, posFollow: 7, lead: 1.2, freeLook: true },
+  // raised three-quarter rear view: straight behind, a pike is a thin tail-on sliver and its heading is hard to read
+  chase: { distBL: 3.0, minM: 0.6, elev: 0.36, angle: 0.32, yawFollow: 3, posFollow: 6, lead: 1.2, freeLook: true },
   close: { distBL: 1.5, minM: 0.3, elev: 0.1, angle: 0.5, yawFollow: 4, posFollow: 12, lead: 0.4, freeLook: true },
   wide: { distBL: 6, minM: 1.5, elev: 0.5, angle: 0.15, yawFollow: 1.2, posFollow: 4, lead: 2, freeLook: false },
   side: { distBL: 2.6, minM: 0.5, elev: 0.08, angle: Math.PI / 2, yawFollow: 1.5, posFollow: 4, lead: 0.2, freeLook: false },
@@ -59,6 +60,7 @@ export class CameraRig {
   private cineAngle = 0;
   private init = false;
   private ceil = -0.12;
+  private burstPull = 0;
 
   constructor(private cam: THREE.PerspectiveCamera) {}
 
@@ -116,7 +118,10 @@ export class CameraRig {
 
     // portrait phones: a narrow screen, so come in closer to keep the fish a decent size
     const portrait = this.cam.aspect < 1 ? 0.65 : 1;
-    const dist = Math.max(s.minM * portrait, s.distBL * L) * this.zoom * portrait;
+    // pull back a little during a burst, so the lunge reads as fast and the target stays in frame
+    const burst = player.burstTimeLeft > 0 ? 1 : 0;
+    this.burstPull += (burst - this.burstPull) * (1 - Math.exp(-(burst ? 5 : 2) * dt));
+    const dist = Math.max(s.minM * portrait, s.distBL * L) * this.zoom * portrait * (1 + 0.25 * this.burstPull);
     const angle = s.angle + this.orbit + (this.mode === "cinematic" ? this.cineAngle : 0);
     const heading = this.camYaw + Math.PI + angle; // direction from fish to camera
     const pitchLook = s.freeLook ? Math.max(-0.9, Math.min(0.9, look.pitch * 0.8 + player.pitch * 0.4)) : 0;
@@ -143,7 +148,9 @@ export class CameraRig {
     this.cam.position.copy(this.pos);
     // look ahead of the head in the swimming direction, smoothed: on turns the fish slides off-centre
     const lead = s.lead * L * Math.min(1.5, 0.4 + player.speed / Math.max(L, 0.05) / 4);
-    this.lookAt.set(p.x + fx * lead, p.y, p.z + fz * lead);
+    // aim along the body's pitch too, so a dive or climb stays in the middle of the frame
+    const cp = Math.cos(player.pitch);
+    this.lookAt.set(p.x + fx * cp * lead, p.y + Math.sin(player.pitch) * lead, p.z + fz * cp * lead);
     this.target.lerp(this.lookAt, 1 - Math.exp(-4 * dt));
     this.cam.lookAt(this.target);
   }

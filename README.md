@@ -25,7 +25,7 @@ are generated in code. There are no image or model files.
   **hooked**: mash Strike and swim away from the boat to throw the hook. If you get landed, the angler lets
   you go only if you have hearts to spare.
 
-**Desktop:** mouse steer · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
+**Desktop:** mouse steer · `A`/`D` (or arrows) turn · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
 `C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu. "Invert mouse" (start screen or menu) makes pushing the mouse forward dive;
 "Mouse sensitivity" sets how far the pike turns per mouse movement. A strike aims at the fish for a split second, then shoots straight.
 

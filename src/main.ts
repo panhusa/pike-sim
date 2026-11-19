@@ -141,6 +141,13 @@ let mouseSens = (() => {
 const MAX_LEAD = 0.8;
 /** Turn command per radian of heading error (was 3: snappy but jerky). */
 const STEER_GAIN = 2.2;
+/** A/D or Left/Right arrow turn speed of the wanted heading (rad/s). */
+const KB_TURN_RAD_S = 1.6;
+/** Within this height over the lakebed (m) a dive flattens out, so the pike glides along the bottom instead of ploughing into it. */
+const BOTTOM_ASSIST_M = 0.6;
+/** Body attitude at the last input step: a lunge turns the body, and the wanted heading turns with it (mouse input kept). */
+let lastBodyYaw = 0;
+let lastBodyPitch = 0;
 const mousePref = {
   get invertY() {
     return invertMouse;
@@ -269,9 +276,16 @@ function playerInput(pl: PikeState): PikeInput {
     return { throttle: Math.max(kbThrottle, touchIn.throttle), yawRate: touchIn.yawRate, pitchRate, burst };
   }
   if (pl.lockId !== null) {
-    // a committed lunge steers the body; the wanted heading follows it so the pike does not swing back afterwards
-    wantYaw = pl.yaw;
-    wantPitch = clamp(pl.pitch, -0.9, 0.9);
+    // a committed lunge steers the body; the wanted heading turns by the same amount, so the pike does not swing back
+    // afterwards and mouse movement during the lunge is kept rather than thrown away
+    wantYaw += angleDiff(pl.yaw, lastBodyYaw);
+    wantPitch = clamp(wantPitch + pl.pitch - lastBodyPitch, -0.9, 0.9);
+  }
+  lastBodyYaw = pl.yaw;
+  lastBodyPitch = pl.pitch;
+  if (sim && wantPitch < 0) {
+    const clear = pl.pos.y - sim.world.bottomY(pl.pos.x, pl.pos.z);
+    if (clear < BOTTOM_ASSIST_M) wantPitch = Math.max(wantPitch, -0.9 * Math.max(0, clear - 0.15) / (BOTTOM_ASSIST_M - 0.15));
   }
   const throttle = kbThrottle;
   wantYaw = pl.yaw + clamp(angleDiff(wantYaw, pl.yaw), -MAX_LEAD, MAX_LEAD);
@@ -383,8 +397,9 @@ function enter(next: Simulation): void {
   const pl = sim.player()!;
   mountTouch(pendingPermission);
   pendingPermission = undefined;
-  wantYaw = pl.yaw;
+  wantYaw = lastBodyYaw = pl.yaw;
   wantPitch = 0;
+  lastBodyPitch = pl.pitch;
   eventCursor = sim.events.length;
   outcomes = new BurstOutcomes();
   game.authority = net?.kind !== "guest";
@@ -774,6 +789,10 @@ function frame(now: number): void {
     const ratio = mode === "playing" ? adaptiveRes?.frame(frameDt) : null;
     if (ratio) view.setPixelRatio(ratio);
     if (mode === "playing") view.rig.orbit += ((keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0)) * 1.6 * frameDt;
+    if (mode === "playing" && !touchIn) {
+      const kbTurn = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
+      if (kbTurn) wantYaw = pl.yaw + clamp(angleDiff(wantYaw + kbTurn * KB_TURN_RAD_S * frameDt, pl.yaw), -MAX_LEAD, MAX_LEAD);
+    }
     game.frame(frameDt, sim, pl, view, mode === "playing" && !restText.startsWith("Resting")); // no hunter clock during rest
     updateHud(sim, pl, restText);
     updateHunting(sim, pl, view, mode === "playing");
