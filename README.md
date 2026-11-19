@@ -1,6 +1,6 @@
 # Pike
 
-You are a young northern pike in a small lake or a river. Hunt, grow from a 22 cm fry-hunter into a lake tyrant,
+You are a northern pike in a lake or a river. Hatch from an egg, hunt, grow from a 1 cm larva into a legend,
 and get away when a bigger pike comes after you. Play alone or share a lake with up to 5 friends.
 
 **Play:** https://panhusa.github.io/pike-sim/ (desktop or phone, nothing to install)
@@ -13,7 +13,10 @@ are generated in code. There are no image or model files.
 - A minimap (N) shows food, bigger and smaller pike, players and the boat. **H** (or the ? button) lists every control.
 - Pick the **water** when you start: the **lake** (still, reed beds, a deep middle) or the **river**
   (a current that carries you downstream, deep slow pools and wide fast riffles; fish hold against the flow).
-- Pick the **growth** speed: Normal, Fast (x3) or Very fast (x8). When hosting, your choice applies to everyone.
+- **Start as** an egg (default) or a 22 cm young pike. From the egg: wriggle out (Space / W, or ✕ on a pad), then grow
+  through Larva, Fry, Fingerling, Juvenile, Fry-hunter, Jack, Hunter, Predator, Lake tyrant and Legend. Until 22 cm
+  every catch grows you straight away, and schools of baby fish your size stay close by.
+- Pick the **growth** speed: Normal, Fast (x3) or Very fast (x8). When hosting, your choices apply to everyone.
 - Fish near you get a ring. **Green** = in reach, strike now. **Amber** = edible, get closer. **Grey** = too big.
 - Quick catches build a combo (up to x5). Goals at the top pay bonuses; growing unlocks new stages.
 - Every few minutes a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.

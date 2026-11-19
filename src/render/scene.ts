@@ -14,6 +14,7 @@ import { buildPlants } from "./plants";
 import { buildTerrain } from "./terrain";
 import { setOutlinesVisible } from "./outline";
 import { buildPost, pixelRatioFor, type PostChain } from "./post";
+import { plantFadeScale } from "./shaders/plantFade.glsl";
 import { buildShafts, buildWater, createWaterUniforms } from "./water";
 
 type Part = { dispose(): void };
@@ -21,6 +22,9 @@ type Part = { dispose(): void };
 /** Orchestrator: owns the renderer, lights and camera, and delegates the world to the build* modules. */
 export class PikeScene {
   readonly scene = new THREE.Scene();
+  /** Egg start: while set, a translucent egg is drawn round the player (wobble 0..1 = how close to hatching). */
+  egg: { wobble: number } | null = null;
+  private eggMesh: THREE.Mesh | null = null;
   readonly camera = new THREE.PerspectiveCamera(65, 1, 0.05, 120);
   readonly renderer: THREE.WebGLRenderer;
   /** resting field of view: wider in portrait so a phone shows more than a sliver of water */
@@ -116,6 +120,10 @@ export class PikeScene {
   /** Release GPU resources and listeners; the canvas can then host a new PikeScene. */
   dispose(): void {
     window.removeEventListener("resize", this.onResize);
+    if (this.eggMesh) {
+      this.eggMesh.geometry.dispose();
+      (this.eggMesh.material as THREE.Material).dispose();
+    }
     try {
       for (const p of [...this.parts, ...(this.post ? [this.post] : [])]) {
         try {
@@ -150,6 +158,24 @@ export class PikeScene {
     return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h, visible: v.z > -1 && v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
   }
 
+  private drawEgg(player: PikeState, timeS: number): void {
+    if (!this.egg) {
+      if (this.eggMesh) this.eggMesh.visible = false;
+      return;
+    }
+    if (!this.eggMesh) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xe8c86a, emissive: 0x4a3510, roughness: 0.25, transparent: true, opacity: 0.42, depthWrite: false });
+      this.eggMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), mat);
+      this.scene.add(this.eggMesh);
+    }
+    const r = (player.lengthCm / 100) * 0.42;
+    const w = this.egg.wobble;
+    const shake = Math.sin(timeS * (8 + 20 * w)) * 0.06 * w;
+    this.eggMesh.visible = true;
+    this.eggMesh.position.set(player.pos.x, player.pos.y, player.pos.z);
+    this.eggMesh.scale.set(r * (1 + shake), r * (1 - shake), r * (1 + shake * 0.5));
+  }
+
   /** Draw the current sim state from the player's pike. `look` is extra camera yaw/pitch offset. */
   render(player: PikeState, timeS: number, env: Environment, dt: number, look: { yaw: number; pitch: number }): void {
     this.ctx.uTime.value = timeS;
@@ -162,6 +188,14 @@ export class PikeScene {
 
     this.fish.update(player, this.rig.hidesPlayer);
     this.rig.update(player, look, this.ctx.sim.world, dt);
+    // tiny fish: bring the near plane and the plant fade in with the camera, so a 1 cm larva is visible in its weed bed
+    const near = Math.min(0.05, Math.max(0.003, this.rig.lastDist * 0.15));
+    if (Math.abs(this.camera.near - near) > near * 0.1) {
+      this.camera.near = near;
+      this.camera.updateProjectionMatrix();
+    }
+    plantFadeScale.value = Math.min(1, Math.max(0.03, player.lengthCm / 22));
+    this.drawEgg(player, timeS);
     this.water.update(env, this.rig.position.y);
     this.particles.update(timeS, dt, this.rig.position, env);
     this.shafts.update(env, this.rig.position);

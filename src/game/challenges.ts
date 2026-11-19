@@ -14,6 +14,8 @@ export interface ChallengeDef {
   target: number;
   /** needs a hunting pike, so it is left out in Chill (no hunters there) */
   danger?: true;
+  /** needs a pike at least this long (cm); a smaller one gets the next goal that fits */
+  minPikeCm?: number;
   /** progress increment for an event given the progress state */
   step(e: ChallengeEvent, st: { times: number[] }): number;
 }
@@ -42,13 +44,13 @@ export const CHALLENGES: ChallengeDef[] = [
       return st.times.length >= 2 ? 1 : 0;
     },
   },
-  { id: "leap", text: "Leap out of the water (swim up fast + Strike)", bonus: 400, target: 1, step: (e) => (e.type === "leap" ? 1 : 0) },
+  { id: "leap", text: "Leap out of the water (swim up fast + Strike)", bonus: 400, target: 1, minPikeCm: 4, step: (e) => (e.type === "leap" ? 1 : 0) },
   catchKind("perch", 1, 500),
-  { id: "insects-3", text: "Snap up 3 insects off the surface", bonus: 500, target: 3, step: (e) => (e.type === "catch" && e.kind === "insect" ? 1 : 0) },
-  { id: "big-one", text: "Catch a fish over 15 cm", bonus: 700, target: 1, step: (e) => (isFish(e) && e.type === "catch" && e.lengthCm > 15 ? 1 : 0) },
-  { id: "survive", text: "Survive a hunting pike", bonus: 800, target: 1, danger: true, step: (e) => (e.type === "hunter-survived" ? 1 : 0) },
+  { id: "insects-3", text: "Snap up 3 insects off the surface", bonus: 500, target: 3, minPikeCm: 3, step: (e) => (e.type === "catch" && e.kind === "insect" ? 1 : 0) },
+  { id: "big-one", text: "Catch a fish over 15 cm", bonus: 700, target: 1, minPikeCm: 25, step: (e) => (isFish(e) && e.type === "catch" && e.lengthCm > 15 ? 1 : 0) },
+  { id: "survive", text: "Survive a hunting pike", bonus: 800, target: 1, danger: true, minPikeCm: 15, step: (e) => (e.type === "hunter-survived" ? 1 : 0) },
   catchKind("rudd", 2, 500),
-  { id: "throw-hook", text: "Get hooked by a lure and throw the hook", bonus: 1500, target: 1, step: (e) => (e.type === "hook-thrown" ? 1 : 0) },
+  { id: "throw-hook", text: "Get hooked by a lure and throw the hook", bonus: 1500, target: 1, minPikeCm: 18, step: (e) => (e.type === "hook-thrown" ? 1 : 0) },
   { id: "catch-any-5", text: "Catch 5 fish", bonus: 900, target: 5, step: (e) => (isFish(e) ? 1 : 0) },
 ];
 
@@ -66,6 +68,15 @@ export class Challenges {
 
   get current(): ChallengeDef {
     return this.list[this.index % this.list.length]!;
+  }
+
+  /** Skip goals the pike is too small for (they come round again later in the cycle). */
+  fit(lengthCm: number): void {
+    for (let i = 0; i < this.list.length && (this.current.minPikeCm ?? 0) > lengthCm; i++) {
+      this.index++;
+      this.progress = 0;
+      this.st = { times: [] };
+    }
   }
 
   /** Feed an event; returns the finished challenge (and its bonus) when this event completed it. */

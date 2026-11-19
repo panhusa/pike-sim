@@ -231,6 +231,7 @@ export class GameSession {
       }
     }
     const st = stageOf(pl.lengthCm);
+    this.goals.fit(pl.lengthCm);
     const g = this.goals.current;
     this.hud.update({
       hearts: sim.chill ? -1 : pl.alive ? heartsOf(pl.health) : 0,

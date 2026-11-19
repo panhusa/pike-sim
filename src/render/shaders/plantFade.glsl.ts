@@ -2,6 +2,8 @@
 
 export const FADE_NEAR = 0.4;
 export const FADE_FAR = 1.4;
+/** Shared uniform: the fade distances are multiplied by this (the scene shrinks it for a tiny player). */
+export const plantFadeScale = { value: 1 };
 
 /** 0 at <= 0.4 m, 1 at >= 1.4 m, smoothstep between. Mirrors the GLSL below. */
 export function nearFade(distToCamera: number): number {
@@ -28,7 +30,8 @@ export const plantFragmentPars = /* glsl */ `
 varying vec3 vPlantWorld;
 varying vec2 vPlantUv;
 
-float plantNearFade(float d) { return smoothstep(${FADE_NEAR.toFixed(2)}, ${FADE_FAR.toFixed(2)}, d); }
+uniform float uPlantFadeScale;
+float plantNearFade(float d) { return smoothstep(${FADE_NEAR.toFixed(2)} * uPlantFadeScale, ${FADE_FAR.toFixed(2)} * uPlantFadeScale, d); }
 // Interleaved gradient noise: a stable screen-space dither in [0, 1).
 float plantDither(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }`;
 

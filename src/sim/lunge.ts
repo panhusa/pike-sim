@@ -18,7 +18,8 @@ export interface LungeTarget {
 
 /** Lunge reach from the mouth: body lengths, but never under the absolute floor (small pike still lunge ~1 m). */
 export function lungeRange(pk: PikeState, p: Params): number {
-  return Math.max(p.pike.lungeRangeBL * (pk.lengthCm / 100), p.pike.lungeMinRangeM);
+  // the floor shrinks for tiny fish (a 2 cm fry cannot lunge 1.8 m); unchanged from ~22 cm up
+  return Math.max(p.pike.lungeRangeBL * (pk.lengthCm / 100), Math.min(p.pike.lungeMinRangeM, 9 * (pk.lengthCm / 100)));
 }
 
 /** Sensed targets around a pike, best lunge target first. Only what pikeSenses perceives is listed. */

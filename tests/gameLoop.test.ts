@@ -28,9 +28,12 @@ describe("Score", () => {
 
 describe("stages", () => {
   it("starts at the first stage and progresses to the next", () => {
-    expect(stageOf(22)).toEqual({ index: 0, progress: 0 });
-    expect(stageOf(26).progress).toBeCloseTo(0.5);
-    expect(stageOf(30).index).toBe(1);
+    expect(stageOf(1.2)).toEqual({ index: 0, progress: 0 });
+    expect(stageOf(1.85).progress).toBeCloseTo(0.5);
+    expect(stageOf(2.5).index).toBe(1);
+    expect(stageOf(22).index).toBe(STAGES.findIndex((s) => s.name === "Fry-hunter")); // the young-pike start
+    expect(stageOf(24).progress).toBeCloseTo(0.5);
+    expect(stageOf(30).index).toBe(5);
     expect(stageOf(200)).toEqual({ index: STAGES.length - 1, progress: 1 });
   });
 });

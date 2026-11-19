@@ -3,7 +3,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { RenderCtx } from "./ctx";
 import type { GfxQuality } from "./gfxSettings";
 import { BIG } from "../sim/world";
-import { nearFade, plantFragment, plantFragmentPars, plantVertex, plantVertexPars } from "./shaders/plantFade.glsl";
+import { nearFade, plantFadeScale, plantFragment, plantFragmentPars, plantVertex, plantVertexPars } from "./shaders/plantFade.glsl";
 import { applyCaustics, applyWater } from "./water";
 
 export { nearFade };
@@ -19,7 +19,7 @@ export function plantCounts(q: GfxQuality, reeds: number, weeds: number, perBed 
   };
 }
 
-const FADE_KEY = "|plantfade2";
+const FADE_KEY = "|plantfade3";
 
 /** Near-camera dither fade (and, with `edge`, a procedural blade outline). Chains earlier onBeforeCompile; apply BEFORE applyCaustics. */
 function applyPlantFade(mat: THREE.Material, edge: boolean): void {
@@ -28,6 +28,7 @@ function applyPlantFade(mat: THREE.Material, edge: boolean): void {
   if (edge) mat.defines = { ...mat.defines, PLANT_EDGE: "", PLANT_BLADE: "" };
   mat.onBeforeCompile = (shader, renderer) => {
     prev.call(mat, shader, renderer);
+    shader.uniforms.uPlantFadeScale = plantFadeScale;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>${plantVertexPars}`)
       .replace("#include <project_vertex>", `#include <project_vertex>${plantVertex}`);

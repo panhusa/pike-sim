@@ -32,7 +32,7 @@ function settingsFrom(raw: unknown): SimSettings {
   if (!raw || typeof raw !== "object") return base;
   const r = raw as Record<string, unknown>;
   const n = (k: keyof SimSettings) => (typeof r[k] === "number" && Number.isFinite(r[k]) ? (r[k] as number) : (base[k] as number));
-  return { ...base, rivalCount: Math.min(20, n("rivalCount")), rivalSizeScale: n("rivalSizeScale"), aggression: n("aggression"), recruitmentScale: n("recruitmentScale"), map: r.map === "river" ? "river" : "lake", chill: r.chill === true, big: r.big === true, growthMul: typeof r.growthMul === "number" && r.growthMul > 0 && r.growthMul <= 20 ? r.growthMul : 1 };
+  return { ...base, rivalCount: Math.min(20, n("rivalCount")), rivalSizeScale: n("rivalSizeScale"), aggression: n("aggression"), recruitmentScale: n("recruitmentScale"), map: r.map === "river" ? "river" : "lake", chill: r.chill === true, big: r.big === true, growthMul: typeof r.growthMul === "number" && r.growthMul > 0 && r.growthMul <= 20 ? r.growthMul : 1, startEgg: r.startEgg === true };
 }
 
 export class NetGuest {

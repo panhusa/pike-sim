@@ -29,6 +29,7 @@ import { browserStorage, createSaveStore } from "./ui/storage";
 import { GamepadInput, type PadState } from "./ui/gamepad";
 import { openPadSetup, padSetupOpen } from "./ui/padSetup";
 import { SessionRecorder } from "./ui/recorder";
+import { EGG_LENGTH_CM, placeInWeedBed, startLengthCm } from "./sim/nursery";
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $("c") as HTMLCanvasElement;
@@ -184,6 +185,10 @@ const KB_TURN_RAD_S = 1.6;
 /** Within this height over the lakebed (m) a dive flattens out, so the pike glides along the bottom instead of ploughing into it. */
 const BOTTOM_ASSIST_M = 0.6;
 /** Body attitude at the last input step: a lunge turns the body, and the wanted heading turns with it (mouse input kept). */
+/** Egg start: the pike waits in its egg until the player wriggles (strike / swim presses) or time runs out. */
+const EGG_TAPS = 6;
+const EGG_MAX_S = 20;
+let egg: { taps: number; t: number } | null = null;
 let lastBodyYaw = 0;
 let lastBodyPitch = 0;
 /** Keyboard / gamepad pitch: hold to dive or rise (up to this angle), the pike levels out again on release. */
@@ -255,7 +260,8 @@ addEventListener("keydown", (e) => {
     view.rig.orbit = 0;
     view.rig.zoom = 1;
   }
-  if (e.code === "Space") burstQueued = true;
+  if (egg && mode === "playing" && !e.repeat && (e.code === "KeyW" || e.code === "ArrowUp" || e.code === "Space")) egg.taps++;
+  else if (e.code === "Space") burstQueued = true;
   if (e.code === "KeyT" && debug) timeScaleIdx = (timeScaleIdx + 1) % TIME_SCALES.length;
   if (e.code === "Escape") pause();
 });
@@ -264,7 +270,8 @@ addEventListener("keyup", (e) => {
   if (e.code === "KeyR") restLatch = false;
 });
 canvas.addEventListener("mousedown", () => {
-  if (mode === "playing" && !touchOn) burstQueued = true;
+  if (egg && mode === "playing") egg.taps++;
+  else if (mode === "playing" && !touchOn) burstQueued = true;
 });
 addEventListener("mousemove", (e) => {
   if (mode !== "playing" || document.pointerLockElement !== canvas) return;
@@ -319,6 +326,12 @@ function playerInput(pl: PikeState): PikeInput {
 }
 
 function playerInputRaw(pl: PikeState): PikeInput {
+  if (egg) {
+    if (touchIn?.burst) egg.taps++; // keys, mouse and pad count on the press itself
+    burstQueued = false;
+    if (touchIn) touchIn.burst = false;
+    return { throttle: 0, yawRate: 0, pitchRate: 0, burst: false };
+  }
   const kbThrottle = Math.max(pad.throttle, keys.has("KeyW") || keys.has("ArrowUp") ? (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.25 : 1) : 0);
   const burst = burstQueued || !!touchIn?.burst;
   burstQueued = false;
@@ -446,7 +459,7 @@ addEventListener("pagehide", () => autosave());
 function settingsFrom(c: NewLifeConfig): SimSettings {
   const base = presetSettings(c.preset === "custom" ? "natural" : c.preset, c.deathMode, defaultParams);
   const s = c.preset === "custom" ? { ...base, rivalCount: c.rivalCount, rivalSizeScale: c.rivalSizeScale, aggression: c.aggression } : base;
-  return { ...s, map: c.map, chill: c.chill, big: true, growthMul: c.growthMul };
+  return { ...s, map: c.map, chill: c.chill, big: true, growthMul: c.growthMul, startEgg: c.startEgg };
 }
 
 function warnSaveFailed(): void {
@@ -482,21 +495,29 @@ function enter(next: Simulation): void {
   hideOverlay(overlay);
   if (!touchOn) lockPointer();
   if (query.get("rec") === "1") recStart();
+  egg = sim.settings.startEgg && pl.lengthCm <= EGG_LENGTH_CM + 1e-6 ? { taps: 0, t: 0 } : null;
+  view.egg = egg ? { wobble: 0 } : null;
+  if (egg) say("You are an egg in the weeds. Wriggle out: press Space or W (or ✕) a few times", 6000);
   rec.event("enter", { settings: { ...sim.settings }, lengthCm: pl.lengthCm, online: net?.kind ?? null });
+}
+
+/** Where a new human pike starts: an egg in a weed bed, or within sight of food. */
+function placeStart(s: Simulation, pl: PikeState): void {
+  if (!(s.settings.startEgg && placeInWeedBed(s.world, pl))) placePlayerNearPrey(s, 7, pl);
 }
 
 function newLife(settings: SimSettings, seed: number): void {
   const s = new Simulation({ seed, settings });
-  const pl = s.addPlayer(s.p.pike.startLengthCm);
+  const pl = s.addPlayer(startLengthCm(settings, s.p));
   s.arcade = true;
-  placePlayerNearPrey(s);
+  placeStart(s, pl);
   enter(s);
   say(`You are a ${pl.sex} pike`);
   if (!persistNewLife(store, settings.deathMode, toSaveFile(s, new Date()))) warnSaveFailed();
 }
 
 // --- multiplayer flow ---
-async function hostGame(name: string, map: MapShape = "lake", chill = true, growthMul = 1): Promise<void> {
+async function hostGame(name: string, map: MapShape = "lake", chill = true, growthMul = 1, startEgg = false): Promise<void> {
   saveName(name);
   let code = makeRoomCode();
   let t;
@@ -508,10 +529,10 @@ async function hostGame(name: string, map: MapShape = "lake", chill = true, grow
       throw new Error(`Could not open a lake (${e instanceof Error ? e.message : "no connection"}). Check your internet connection.`);
     });
   }
-  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill, big: true, growthMul } });
-  s.addPlayer(s.p.pike.startLengthCm);
+  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill, big: true, growthMul, startEgg } });
+  const hpl = s.addPlayer(startLengthCm(s.settings, s.p));
   s.arcade = true;
-  placePlayerNearPrey(s);
+  placeStart(s, hpl);
   const host = new NetHost(s, t, code);
   host.hostName = myName;
   net = { kind: "host", host };
@@ -577,9 +598,9 @@ function respawnOnline(): void {
   if (!sim || !net) return;
   if (net.kind === "host") {
     const old = sim.player();
-    const pl = sim.addPlayer(sim.p.pike.startLengthCm);
+    const pl = sim.addPlayer(startLengthCm(sim.settings, sim.p));
     if (old) sim.humanIds.delete(old.id);
-    placePlayerNearPrey(sim, 7, pl);
+    placeStart(sim, pl);
     enter(sim);
     return;
   }
@@ -887,6 +908,18 @@ addEventListener("keydown", (e) => {
 });
 
 /** Gamepad buttons and keyboard/stick steering, once per rendered frame. */
+function eggFrame(frameDt: number): void {
+  if (!egg || mode !== "playing" || !view) return;
+  egg.t += frameDt;
+  view.egg = { wobble: Math.min(1, egg.taps / EGG_TAPS) };
+  if (egg.taps >= EGG_TAPS || egg.t >= EGG_MAX_S) {
+    egg = null;
+    view.egg = null;
+    say("You hatched! Eat the tiny fish around you to grow", 4000);
+    rec.event("hatch");
+  }
+}
+
 function padAndKeys(frameDt: number): void {
   if (padSetupOpen()) {
     pad = gamepad.read([]); // the setup screen owns the controller while it is open
@@ -901,7 +934,10 @@ function padAndKeys(frameDt: number): void {
   }
   if (pad.pause) return pause();
   if (pad.camera) nextCamera();
-  if (pad.strike) burstQueued = true;
+  if (pad.strike) {
+    if (egg) egg.taps++;
+    else burstQueued = true;
+  }
   const pl = sim?.player();
   if (!pl || !view || touchIn) return;
   view.rig.orbit += pad.orbit * 1.6 * frameDt;
@@ -926,6 +962,7 @@ function frame(now: number): void {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
   padAndKeys(frameDt);
+  eggFrame(frameDt);
   if (sim && view) {
     let restText = "";
     const alive = !!sim.player()?.alive;

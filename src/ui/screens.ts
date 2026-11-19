@@ -23,6 +23,14 @@ export interface NewLifeConfig {
   chill: boolean;
   /** growth speed multiplier (the Growth option) */
   growthMul: number;
+  /** start as an egg (grow through every stage) instead of the 22 cm young pike */
+  startEgg: boolean;
+}
+
+function startSelect(): HTMLSelectElement {
+  const sel = h("select", {});
+  sel.append(h("option", { value: "egg", textContent: "Egg: hatch at 1 cm and grow through every stage" }), h("option", { value: "young", textContent: "Young pike (22 cm)" }));
+  return sel;
 }
 
 function growthSelect(): HTMLSelectElement {
@@ -150,6 +158,7 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
   const map = mapSelect();
   const play = playSelect();
   const growth = growthSelect();
+  const start = startSelect();
   const danger = h("div", {}, h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom);
   danger.style.display = "none";
   play.addEventListener("change", () => (danger.style.display = play.value === "chill" ? "none" : "block"));
@@ -165,15 +174,16 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
       map: map.value === "river" ? "river" : "lake",
       chill: play.value === "chill",
       growthMul: Number(growth.value) || 1,
+      startEgg: start.value === "egg",
     });
   });
-  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), h("label", {}, "Growth ", growth), danger, h("label", {}, "Seed ", seed), go);
+  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), h("label", {}, "Start as ", start), h("label", {}, "Growth ", growth), danger, h("label", {}, "Seed ", seed), go);
 }
 
 export interface OnlineHandlers {
   name: string;
   /** resolves when the lake is open; rejects with a readable message */
-  onHost(name: string, map: MapShape, chill: boolean, growthMul: number): Promise<void>;
+  onHost(name: string, map: MapShape, chill: boolean, growthMul: number, startEgg: boolean): Promise<void>;
   onJoin(name: string, code: string): Promise<void>;
 }
 
@@ -196,9 +206,10 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
   const hostMap = mapSelect();
   const hostChill = h("input", { type: "checkbox", checked: true });
   const hostGrowth = growthSelect();
+  const hostStart = startSelect();
   const hostBtn = button("Host", () => {
     busy(true, "Opening a lake…");
-    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked, Number(hostGrowth.value) || 1).catch(fail);
+    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked, Number(hostGrowth.value) || 1, hostStart.value === "egg").catch(fail);
   });
   const joinBtn = button(
     "Join",
@@ -215,6 +226,7 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
     p("Share a lake with up to 5 friends: hunt the same fish, race for score, and watch out for bigger players. One of you hosts and reads out the code."),
     h("label", {}, "Name ", name),
     h("label", {}, "Water ", hostMap),
+    h("label", {}, "Start as ", hostStart),
     h("label", {}, "Growth ", hostGrowth),
     h("label", {}, hostChill, " Chill (nobody can die) ", hostBtn),
     h("label", {}, "Code ", code, " ", joinBtn),

@@ -18,6 +18,8 @@ export interface SimSettings {
   big?: boolean;
   /** game only: multiplier on the human players' growth efficiency (1 = normal) */
   growthMul?: number;
+  /** game only: humans start as an egg (hatch at EGG_LENGTH_CM) instead of the 22 cm young pike */
+  startEgg?: boolean;
 }
 
 export function presetSettings(preset: DangerPreset, deathMode: DeathMode, p: Params): SimSettings {

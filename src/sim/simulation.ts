@@ -4,6 +4,7 @@ import { defaultParams, type Params, type PreyKind } from "./params";
 import { checkMilestones, type MilestoneId } from "./milestones";
 import { canStartBurst, condition, makePike, stepPike, lengthM, stomachRoom, tooFullFor, type PikeInput, type PikeState, type Sex, type DeathCause } from "./pike";
 import { homingInput, lungeCandidate, PLAYER_AIM_S, PLAYER_HOMING_MAX } from "./lunge";
+import { NURSERY_END_CM, NURSERY_PREY_FRAC, nurseryGrow } from "./nursery";
 import { makeRivalMemory, pickHome, rivalInput } from "./rival";
 import { presetSettings, type SimSettings } from "./settings";
 import { spawnPrey, stepPrey, preySpeed, type PreyState } from "./prey";
@@ -341,14 +342,20 @@ export class Simulation {
     }
   }
 
-  private spawnSchool(kind: PreyKind, count: number, juvenile = false, at?: Vec3): void {
+  /** `sizes` (game nursery): baby fish lengths in cm, and a school spread to match (m). */
+  private spawnSchool(kind: PreyKind, count: number, juvenile = false, at?: Vec3, sizes?: { cm: [number, number]; spreadM: number }): void {
     const spec = this.p.prey[kind];
     const [minL, maxL] = spec.lengthCm as [number, number];
     const id = this.nextSchool++;
     const centre = at ?? this.randomWaterPos(0.5);
+    const spread = sizes?.spreadM ?? 1.2;
     for (let i = 0; i < count; i++) {
-      const L = juvenile ? minL * this.rng.range(0.7, 1) : minL + (maxL - minL) * Math.pow(this.rng.next(), this.p.preyLife.stockSizeSkew);
-      const pos = v3(centre.x + this.rng.gauss() * 1.2, centre.y + this.rng.gauss() * 0.4, centre.z + this.rng.gauss() * 1.2);
+      const L = sizes
+        ? this.rng.range(sizes.cm[0], sizes.cm[1])
+        : juvenile
+          ? minL * this.rng.range(0.7, 1)
+          : minL + (maxL - minL) * Math.pow(this.rng.next(), this.p.preyLife.stockSizeSkew);
+      const pos = v3(centre.x + this.rng.gauss() * spread, centre.y + this.rng.gauss() * (sizes ? spread * 0.33 : 0.4), centre.z + this.rng.gauss() * spread);
       this.world.confine(pos);
       this.prey.push(spawnPrey(this.nextId++, kind, id, pos, L, this.p, this.rng));
     }
@@ -436,6 +443,7 @@ export class Simulation {
     if (this.arcade) {
       this.extras.step(this, dt);
       this.arcadeRestock(dt);
+      this.nurseryStock(dt);
     }
     for (const pk of live) if (pk.alive && pk.burstTimeLeft > 0) this.resolveStrikes(pk);
     for (const pk of live) if (pk.burstTimeLeft <= 0) pk.lockId = null; // a capture ends the burst inside resolveStrikes
@@ -497,14 +505,17 @@ export class Simulation {
     const pp = this.paramsFor(pk);
     const k = pp.strike;
     if (targetLengthCm > pp.pike.maxPreyLengthFracOfBL * pk.lengthCm) return miss("too-big");
-    if (tooFullFor(pk, targetWeight, pp)) return miss("full");
+    // a nursery pike (game, egg start) turns each catch straight into growth, so its tiny stomach never fills
+    const nursery = this.arcade && this.isHuman(pk) && pk.lengthCm < NURSERY_END_CM;
+    if (!nursery && tooFullFor(pk, targetWeight, pp)) return miss("full");
     const align = dot(f, norm(sub(pos, pk.pos)));
     if (align < k.alignMin) return miss("off-axis");
     // Capture odds: aligned, fast attack vs. how fast and how alert the target is.
     const closing = clamp(pk.speed / (pp.pike.burstBL * lengthM(pk)), k.closingMin, 1);
-    const odds = clamp(k.oddsBase * ((align - k.alignOffset) / k.alignSpan) * closing * (1 - escape), k.oddsMin, k.oddsMax);
+    // nursery strikes (game, egg start) land more often: baby fish are what a hatchling lives on
+    const odds = clamp(k.oddsBase * ((align - k.alignOffset) / k.alignSpan) * closing * (1 - escape), nursery ? Math.max(k.oddsMin, 0.55) : k.oddsMin, k.oddsMax);
     if (this.rng.next() >= odds) return miss("evaded");
-    const grams = Math.min(targetWeight, stomachRoom(pk, this.p));
+    const grams = nursery ? targetWeight : Math.min(targetWeight, stomachRoom(pk, this.p));
     pk.stomachG += grams;
     pk.speed *= k.momentumKept; // gulping and turning the prey costs momentum
     pk.burstTimeLeft = 0;
@@ -541,6 +552,7 @@ export class Simulation {
     const grams = Math.min(bug.grams, Math.max(stomachRoom(pk, this.p), 0.1));
     pk.stomachG += grams;
     this.events.push({ type: "capture", pikeId: pk.id, preyId: bug.id, kind: "insect", grams, lengthCm: 2, t: this.time });
+    if (this.arcade && this.isHuman(pk)) nurseryGrow(pk, 2, this.settings.growthMul ?? 1, this.p);
   }
 
   private resolveStrikes(pk: PikeState): void {
@@ -561,6 +573,7 @@ export class Simulation {
       if (grams === null) continue;
       prey.alive = false;
       this.events.push({ type: "capture", pikeId: pk.id, preyId: prey.id, kind: prey.kind, grams, lengthCm: prey.lengthCm, t: this.time });
+      if (this.arcade && this.isHuman(pk)) nurseryGrow(pk, prey.lengthCm, this.settings.growthMul ?? 1, this.p);
       return;
     }
 
@@ -615,7 +628,8 @@ export class Simulation {
     let best: PreyKind | null = null;
     let bestFill = ARCADE_STOCK;
     for (const [kind, cap] of this.capacity) {
-      const fill = this.prey.filter((f) => f.alive && f.kind === kind).length / cap;
+      const minL = (this.p.prey[kind].lengthCm as [number, number])[0] * 0.7; // nursery babies do not count
+      const fill = this.prey.filter((f) => f.alive && f.kind === kind && f.lengthCm >= minL).length / cap;
       if (fill < bestFill) [best, bestFill] = [kind, fill];
     }
     if (!best) return;
@@ -625,6 +639,42 @@ export class Simulation {
       if (humans.every((h) => Math.hypot(h.pos.x - c.x, h.pos.z - c.z) > 14)) {
         this.spawnSchool(best, 8 + Math.floor(this.rng.next() * 6), false, c);
         return;
+      }
+    }
+  }
+
+  private nurseryIn = 0;
+  /**
+   * Game only: a human still in the nursery (under NURSERY_END_CM) gets schools of baby fish sized to their
+   * gape, close by (a 1 cm larva swims a few cm a second); babies nobody small is near any more are removed.
+   */
+  private nurseryStock(dt: number): void {
+    this.nurseryIn -= dt;
+    if (this.nurseryIn > 0) return;
+    this.nurseryIn = 2;
+    const small = this.pikes.filter((k) => k.alive && this.isHuman(k) && k.lengthCm < NURSERY_END_CM);
+    const kinds: PreyKind[] = ["roach", "rudd", "perch"];
+    for (const f of this.prey) {
+      if (!f.alive || f.lengthCm >= 6) continue;
+      const near = small.some((h) => Math.hypot(h.pos.x - f.pos.x, h.pos.z - f.pos.z) < Math.max(3, h.lengthCm * 1.2) && f.lengthCm < h.lengthCm * 0.8);
+      if (!near) f.alive = false;
+    }
+    for (const h of small) {
+      const L = h.lengthCm;
+      const lo = L * NURSERY_PREY_FRAC[0];
+      const hi = L * NURSERY_PREY_FRAC[1];
+      const range = Math.max(1.5, L * 0.5); // m
+      const edible = this.prey.filter((f) => f.alive && f.lengthCm >= lo * 0.7 && f.lengthCm <= L * 0.62 && Math.hypot(h.pos.x - f.pos.x, h.pos.z - f.pos.z) < range).length;
+      if (edible >= 14) continue;
+      const d = clamp(L * 0.4, 0.35, 6); // m from the player
+      for (let i = 0; i < 8; i++) {
+        const a = this.rng.range(0, Math.PI * 2);
+        const c = v3(h.pos.x + Math.cos(a) * d, h.pos.y + this.rng.range(-0.3, 0.3) * d, h.pos.z + Math.sin(a) * d);
+        if (!this.world.inWater(c.x, c.z)) continue;
+        this.world.confine(c, 0.1);
+        const kind = kinds[Math.floor(this.rng.next() * kinds.length)]!;
+        this.spawnSchool(kind, 10 + Math.floor(this.rng.next() * 8), false, c, { cm: [Math.max(0.4, lo), Math.max(0.6, hi)], spreadM: Math.max(0.06, L * 0.04) });
+        break;
       }
     }
   }

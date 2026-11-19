@@ -3,6 +3,7 @@
  * inputs before each sim step, forwards each guest the events about its own pike, and broadcasts
  * snapshots at SNAPSHOT_HZ.
  */
+import { placeInWeedBed, startLengthCm } from "../sim/nursery";
 import { placePlayerNearPrey, type SimEvent, type Simulation } from "../sim/simulation";
 import { MAX_PLAYERS, packExtras, packPrey, parseGuestMsg, PROTOCOL_VERSION, SNAPSHOT_HZ, type PikeSnap, type PlayerInfo } from "./protocol";
 import type { HostTransport } from "./transport";
@@ -46,8 +47,8 @@ export class NetHost {
 
   /** Switch to a new simulation object (host respawn keeps the same sim; kept for clarity). */
   private spawnFor(g: Guest): number {
-    const pk = this.sim.addHuman(this.sim.p.pike.startLengthCm);
-    placePlayerNearPrey(this.sim, 7, pk);
+    const pk = this.sim.addHuman(startLengthCm(this.sim.settings, this.sim.p));
+    if (!(this.sim.settings.startEgg && placeInWeedBed(this.sim.world, pk))) placePlayerNearPrey(this.sim, 7, pk);
     g.pikeId = pk.id;
     return pk.id;
   }

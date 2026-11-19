@@ -44,15 +44,20 @@ export interface Stage {
 }
 
 export const STAGES: Stage[] = [
-  { name: "Fry-hunter", fromCm: 0 },
+  { name: "Larva", fromCm: 0 },
+  { name: "Fry", fromCm: 2.5 },
+  { name: "Fingerling", fromCm: 5 },
+  { name: "Juvenile", fromCm: 10 },
+  { name: "Fry-hunter", fromCm: 18 },
   { name: "Jack", fromCm: 30 },
   { name: "Hunter", fromCm: 40 },
   { name: "Predator", fromCm: 55 },
   { name: "Lake tyrant", fromCm: 75 },
+  { name: "Legend", fromCm: 100 },
 ];
 
 /** Current stage index, and progress 0..1 toward the next (1 at the last stage). */
-export function stageOf(lengthCm: number, startCm = 22): { index: number; progress: number } {
+export function stageOf(lengthCm: number, startCm = 1.2): { index: number; progress: number } {
   let index = 0;
   for (let i = 0; i < STAGES.length; i++) if (lengthCm >= STAGES[i]!.fromCm) index = i;
   const next = STAGES[index + 1];
