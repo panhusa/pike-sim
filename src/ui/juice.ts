@@ -97,7 +97,7 @@ export class GameHud {
   private stage = el("stage");
   private stageBar = el("stageBar").firstElementChild as HTMLElement;
   private hearts = el("hearts");
-  private lastHearts = -1;
+  private lastHearts = -99;
   private hookBar = el("hookBar");
   private hookFill = this.hookBar.firstElementChild!.firstElementChild as HTMLElement;
 
@@ -109,7 +109,10 @@ export class GameHud {
 
   update(s: { hearts: number; points: number; best: number; mult: number; comboLeft: number; goal: string; goalProgress: string; stage: string; stageProgress: number; nextStage: string }): void {
     this.score.textContent = s.points.toLocaleString("en");
-    if (s.hearts !== this.lastHearts) {
+    if (s.hearts !== this.lastHearts && s.hearts < 0) {
+      this.hearts.innerHTML = '<span class="chill">chill</span>'; // chill mode: no hearts to lose
+      this.lastHearts = s.hearts;
+    } else if (s.hearts !== this.lastHearts) {
       this.hearts.innerHTML = [0, 1, 2].map((i) => `<span${i < s.hearts ? "" : ' class="lost"'}>&#9829;</span>`).join("");
       if (s.hearts < this.lastHearts) {
         this.hearts.classList.remove("hit");

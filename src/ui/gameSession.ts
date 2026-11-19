@@ -159,7 +159,7 @@ export class GameSession {
       case "released":
         if (e.pikeId !== pl.id) return;
         this.audio.bitten();
-        this.juice.showBanner("Landed... and released", "The angler let you go. You are hurt.", "danger", 3500);
+        this.juice.showBanner("Landed... and released", sim.chill ? "A quick photo, and back into the water." : "The angler let you go. You are hurt.", sim.chill ? "good" : "danger", 3500);
         return;
       default:
         return;
@@ -184,7 +184,7 @@ export class GameSession {
     let speed01 = 0;
     if (playing && pl.alive) {
       this.playT += dt;
-      if (this.authority && this.danger.tick(dt, sim.hunter !== null)) {
+      if (this.authority && !sim.chill && this.danger.tick(dt, sim.hunter !== null)) {
         // in a shared lake the hunter picks any human player
         const humans = sim.pikes.filter((k) => k.alive && sim.isHuman(k));
         const target = humans[Math.floor(Math.random() * humans.length)];
@@ -233,7 +233,7 @@ export class GameSession {
     const st = stageOf(pl.lengthCm);
     const g = this.goals.current;
     this.hud.update({
-      hearts: pl.alive ? heartsOf(pl.health) : 0,
+      hearts: sim.chill ? -1 : pl.alive ? heartsOf(pl.health) : 0,
       points: this.score.points,
       best: this.best,
       mult: Math.min(COMBO_MAX, this.score.combo),

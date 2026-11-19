@@ -12,6 +12,8 @@ export interface SimSettings {
   recruitmentScale: number;
   /** which water: the round lake (default, and every save from before rivers) or the river */
   map?: MapShape;
+  /** game only: nothing can kill a human player (no bites, no starving, the angler always lets you go) */
+  chill?: boolean;
 }
 
 export function presetSettings(preset: DangerPreset, deathMode: DeathMode, p: Params): SimSettings {

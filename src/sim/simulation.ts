@@ -102,6 +102,11 @@ export class Simulation {
   arcade = false;
   /** Other human players' pike (multiplayer guests; transient, not saved). They get the arcade tuning like the player. */
   readonly humanIds = new Set<number>();
+  /** Chill game: humans cannot die (arcade + settings.chill). */
+  get chill(): boolean {
+    return this.arcade && this.settings.chill === true;
+  }
+
   /** Game leaps in progress, by pike id (arcade humans only; transient). */
   airborne = new Map<number, Airborne>();
   /** Insects and the fisherman (arcade only; transient, own RNG). */
@@ -377,6 +382,7 @@ export class Simulation {
         pk.burstCooldown = Math.max(0, pk.burstCooldown - dt);
         pk.burstTimeLeft = Math.max(0, pk.burstTimeLeft - dt);
       } else {
+        if (this.chill && this.isHuman(pk)) pk.health = Math.max(pk.health, 0.5); // hunger never kills in chill
         stepPike(pk, input, this.env.tempC, dt, this.paramsFor(pk), this.bioScale);
         if (this.world.shape === "river") this.drift(pk.pos, dt);
       }
@@ -441,8 +447,8 @@ export class Simulation {
 
   /** A human pike reached the fisherman's boat: released with damage if it can spare it, else caught. */
   private landed(pk: PikeState): void {
-    if (pk.health > ANGLER.releaseHearts + 0.01) {
-      pk.health -= ANGLER.releaseHearts;
+    if (this.chill || pk.health > ANGLER.releaseHearts + 0.01) {
+      if (!this.chill) pk.health -= ANGLER.releaseHearts; // chill: a photo and back in, unharmed
       // dropped back over the side, a little dazed
       const a = this.extras.angler;
       const ang = a ? a.boatYaw + Math.PI / 2 : 0;
@@ -555,6 +561,7 @@ export class Simulation {
 
     for (const other of this.pikes) {
       if (!other.alive || other.id === pk.id || dist(other.pos, mouth) > reach) continue;
+      if (this.chill && this.isHuman(other)) continue; // nobody eats you in chill
       const escape =
         clamp(other.speed / (this.p.pike.burstBL * lengthM(other)), 0, 1) * k.escapeSpeedWeight +
         (other.burstTimeLeft > 0 ? k.escapeAlertWeight : 0);

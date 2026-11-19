@@ -9,6 +9,8 @@ Everything you see is procedural: the lake, plants, light and every fish (anatom
 are generated in code. There are no image or model files.
 
 ## How to play
+- **Chill** (default): nothing can kill you, just swim and hunt. **Challenge**: hunters, bites, anglers, starving.
+- A minimap (N) shows food, bigger and smaller pike, players and the boat. **H** (or the ? button) lists every control.
 - Pick the **water** when you start: the **lake** (still, reed beds, a deep middle) or the **river**
   (a current that carries you downstream, deep slow pools and wide fast riffles; fish hold against the flow).
 - Fish near you get a ring. **Green** = in reach, strike now. **Amber** = edible, get closer. **Grey** = too big.

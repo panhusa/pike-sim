@@ -19,6 +19,14 @@ export interface NewLifeConfig {
   aggression: number;
   seed: number;
   map: MapShape;
+  /** nothing can kill you: just swim and hunt */
+  chill: boolean;
+}
+
+function playSelect(): HTMLSelectElement {
+  const sel = h("select", {});
+  sel.append(h("option", { value: "chill", textContent: "Chill: just swim and hunt, nothing can kill you" }), h("option", { value: "challenge", textContent: "Challenge: hunters, bites, anglers, starving" }));
+  return sel;
 }
 
 function mapSelect(): HTMLSelectElement {
@@ -95,7 +103,6 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
   const size = slider(0.6, 1.5, 0.05, 1);
   const aggr = slider(0.3, 2, 0.05, 1);
   const seed = h("input", { type: "number", value: String(defaultSeed ?? Math.floor(Math.random() * 1e9)) });
-  const map = mapSelect();
   const custom = h("div", { className: "custom" });
   const row = (label: string, input: HTMLInputElement): HTMLElement => {
     const val = h("span", { textContent: input.value });
@@ -105,6 +112,11 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
   custom.append(row("Rival pikes", rivals), row("Rival size", size), row("Aggression", aggr));
   custom.style.display = "none";
   preset.addEventListener("change", () => (custom.style.display = preset.value === "custom" ? "block" : "none"));
+  const map = mapSelect();
+  const play = playSelect();
+  const danger = h("div", {}, h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom);
+  danger.style.display = "none";
+  play.addEventListener("change", () => (danger.style.display = play.value === "chill" ? "none" : "block"));
   const go = button("Start a new life", () => {
     if (confirmFirst && !confirm("This replaces your saved pike, which could not be loaded. Continue?")) return;
     onNew({
@@ -115,15 +127,16 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
       aggression: Number(aggr.value),
       seed: Number(seed.value) || 1,
       map: map.value === "river" ? "river" : "lake",
+      chill: play.value === "chill",
     });
   });
-  return h("div", { className: "form" }, h("label", {}, "Water ", map), h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom, h("label", {}, "Seed ", seed), go);
+  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), danger, h("label", {}, "Seed ", seed), go);
 }
 
 export interface OnlineHandlers {
   name: string;
   /** resolves when the lake is open; rejects with a readable message */
-  onHost(name: string, map: MapShape): Promise<void>;
+  onHost(name: string, map: MapShape, chill: boolean): Promise<void>;
   onJoin(name: string, code: string): Promise<void>;
 }
 
@@ -144,9 +157,10 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
     status.className = "warn";
   };
   const hostMap = mapSelect();
+  const hostChill = h("input", { type: "checkbox", checked: true });
   const hostBtn = button("Host", () => {
     busy(true, "Opening a lake…");
-    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake").catch(fail);
+    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked).catch(fail);
   });
   const joinBtn = button(
     "Join",
@@ -162,7 +176,8 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
     h("b", { textContent: "Play with friends" }),
     p("Share a lake with up to 5 friends: hunt the same fish, race for score, and watch out for bigger players. One of you hosts and reads out the code."),
     h("label", {}, "Name ", name),
-    h("label", {}, "Water ", hostMap, " ", hostBtn),
+    h("label", {}, "Water ", hostMap),
+    h("label", {}, hostChill, " Chill (nobody can die) ", hostBtn),
     h("label", {}, "Code ", code, " ", joinBtn),
     status,
   );
@@ -184,11 +199,11 @@ export interface StartHandlers {
 export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: boolean, hd: StartHandlers, defaultSeed?: number): void {
   const kids: Node[] = [
     h("h1", { textContent: "Pike" }),
-    p("You are a young northern pike in a small lake. Grow, survive the winter, and become the apex predator."),
-    p("Chase fish until their ring turns green, then strike. Chain catches for combos, grow through the stages, and get away when a big pike hunts you."),
+    p("You are a young northern pike in a lake or a river. Hunt, grow, leap after mayflies, and become the apex predator."),
+    p("Chase fish until their ring turns green, then strike. Chain catches for combos and grow through the stages. In Chill you just swim; in Challenge big pike and anglers are out to get you."),
   ];
   const keysLine = h("p", {});
-  keysLine.innerHTML = "<kbd>Mouse</kbd> steer &nbsp; <kbd>W</kbd> swim &nbsp; <kbd>Shift</kbd>+<kbd>W</kbd> stalk slowly &nbsp; <kbd>Space</kbd> / click strike &nbsp; <kbd>R</kbd> rest (in cover, when still) &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>Wheel</kbd> zoom &nbsp; <kbd>Q</kbd>/<kbd>E</kbd> orbit &nbsp; <kbd>V</kbd> reset view";
+  keysLine.innerHTML = "<kbd>Mouse</kbd> steer &nbsp; <kbd>W</kbd> swim &nbsp; <kbd>Shift</kbd>+<kbd>W</kbd> stalk slowly &nbsp; <kbd>Space</kbd> / click strike &nbsp; <kbd>R</kbd> rest (in cover, when still) &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>Wheel</kbd> zoom &nbsp; <kbd>Q</kbd>/<kbd>E</kbd> orbit &nbsp; <kbd>V</kbd> reset view &nbsp; <kbd>N</kbd> minimap &nbsp; <kbd>H</kbd> all controls";
   if (hd.controls) keysLine.textContent = "Joystick: steer and swim (push further to go faster). Strike to lunge, hold Rest when still in cover, Cam to change the view. Tilt steering can be picked below.";
   kids.push(keysLine);
   if (hd.controls) kids.push(controlsRow(hd.controls));

@@ -8,6 +8,7 @@ import { MILESTONE_TEXT } from "./sim/milestones";
 import { condition, hunger, type PikeInput, type PikeState } from "./sim/pike";
 import { restBlockers, restFor, type RestBlocker } from "./sim/rest";
 import { parseSave, toSaveFile } from "./sim/save";
+import { Minimap } from "./ui/minimap";
 import { presetSettings, type SimSettings } from "./sim/settings";
 import type { MapShape } from "./sim/world";
 import { placePlayerNearPrey, Simulation, type MissReason, type SimEvent } from "./sim/simulation";
@@ -128,9 +129,24 @@ let restLatch = false; // after a rest stop, R must be released before resting a
 const TIME_SCALES = [1, 10, 60];
 let timeScaleIdx = 0;
 
+// --- minimap and controls help ---
+const minimap = new Minimap(document.getElementById("minimap") as HTMLCanvasElement);
+const keysPanel = document.getElementById("keys")!;
+function toggleKeys(show = !keysPanel.classList.contains("show")): void {
+  keysPanel.classList.toggle("show", show); // an overlay over the running game; H or a tap closes it
+}
+document.getElementById("helpBtn")!.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleKeys();
+});
+keysPanel.addEventListener("click", () => toggleKeys(false));
+let shownMode = "";
+
 addEventListener("keydown", (e) => {
   keys.add(e.code);
   game.audio.unlock();
+  if (e.code === "KeyH") toggleKeys();
+  if (e.code === "KeyN") say(minimap.toggle() ? "Minimap on (N)" : "Minimap off (N)");
   if (e.code === "KeyM") say(game.audio.toggleMute() ? "Sound off (M)" : "Sound on (M)");
   if (e.code === "KeyC" && mode === "playing") nextCamera();
   if (e.code === "KeyV" && view) {
@@ -296,7 +312,7 @@ addEventListener("pagehide", () => autosave());
 function settingsFrom(c: NewLifeConfig): SimSettings {
   const base = presetSettings(c.preset === "custom" ? "natural" : c.preset, c.deathMode, defaultParams);
   const s = c.preset === "custom" ? { ...base, rivalCount: c.rivalCount, rivalSizeScale: c.rivalSizeScale, aggression: c.aggression } : base;
-  return { ...s, map: c.map };
+  return { ...s, map: c.map, chill: c.chill };
 }
 
 function warnSaveFailed(): void {
@@ -342,7 +358,7 @@ function newLife(settings: SimSettings, seed: number): void {
 }
 
 // --- multiplayer flow ---
-async function hostGame(name: string, map: MapShape = "lake"): Promise<void> {
+async function hostGame(name: string, map: MapShape = "lake", chill = true): Promise<void> {
   saveName(name);
   let code = makeRoomCode();
   let t;
@@ -354,7 +370,7 @@ async function hostGame(name: string, map: MapShape = "lake"): Promise<void> {
       throw new Error(`Could not open a lake (${e instanceof Error ? e.message : "no connection"}). Check your internet connection.`);
     });
   }
-  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map } });
+  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill } });
   s.addPlayer(s.p.pike.startLengthCm);
   s.arcade = true;
   placePlayerNearPrey(s);
@@ -687,6 +703,16 @@ function frame(now: number): void {
     updateHud(sim, pl, restText);
     updateHunting(sim, pl, view, mode === "playing");
     if (net) updateOnlineHud(sim, pl, view);
+    const showing = mode === "playing" || mode === "paused";
+    if (showing && minimap.visible) {
+      minimap.show();
+      minimap.update(frameDt, sim, pl);
+    } else minimap.hide();
+    if (mode !== shownMode) {
+      shownMode = mode;
+      document.body.classList.toggle("playing", mode === "playing");
+      if (mode === "menu") toggleKeys(false);
+    }
     (window as unknown as { __pike: unknown }).__pike = { sim, view, player: pl };
   }
   requestAnimationFrame(frame);
