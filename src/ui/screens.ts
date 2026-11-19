@@ -158,7 +158,7 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
 }
 
 export function showOnlineDeath(root: HTMLElement, cause: string, score: number, onRespawn: () => void, onLeave: () => void): void {
-  mount(root, h("h1", { textContent: "You were eaten" }), p(cause), p(`Score this life: ${score.toLocaleString("en")}`), button("Respawn", onRespawn), button("Leave the lake", onLeave, "secondary"));
+  mount(root, h("h1", { textContent: "You died" }), p(cause), p(`Score this life: ${score.toLocaleString("en")}`), button("Respawn", onRespawn), button("Leave the lake", onLeave, "secondary"));
 }
 
 export interface StartHandlers {
@@ -214,7 +214,7 @@ export function showDeath(
   extra: { rewindDay: number | null; offspringLiving: number; offspringCohorts: number; noOffspring: boolean },
   hd: DeathHandlers,
 ): void {
-  const cause = s.cause === "eaten" ? `Eaten by a ${Math.round(s.byLengthCm ?? 0)} cm pike` : "Starved";
+  const cause = s.cause === "eaten" ? `Eaten by a ${Math.round(s.byLengthCm ?? 0)} cm pike` : s.cause === "caught" ? "Caught by an angler" : "Starved";
   const kids: Node[] = [
     h("h1", { textContent: "Your pike died" }),
     p(cause),

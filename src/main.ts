@@ -235,7 +235,8 @@ function sayOutcome(e: SimEvent | null, s: Simulation): void {
   if (!e) return;
   if (e.type === "capture") {
     s.playerHintsDone = true;
-    say(`Caught a ${e.kind === "pike" ? "pike" : s.p.prey[e.kind].label.toLowerCase()} ${Math.round(e.lengthCm)} cm (+${Math.round(e.grams)} g)`);
+    if (e.kind === "insect") say(`Snapped up an insect (+${e.grams.toFixed(1)} g)`);
+    else say(`Caught a ${e.kind === "pike" ? "pike" : s.p.prey[e.kind].label.toLowerCase()} ${Math.round(e.lengthCm)} cm (+${Math.round(e.grams)} g)`);
     pulseStomach();
   } else if (e.type === "miss") say(MISS_TEXT[e.reason]);
   else if (e.type === "strike-empty") say("Nothing in range.");
@@ -505,7 +506,7 @@ function die(noOffspring = false, persist = true): void {
     game.death();
     if (document.pointerLockElement) document.exitPointerLock?.();
     const killer = pl?.killedBy !== undefined ? playerName(pl.killedBy) : null;
-    const cause = killer ? `${killer} ate you.` : pl?.deathCause === "starvation" ? "You starved." : "A bigger pike got you.";
+    const cause = pl?.deathCause === "caught" ? "An angler landed you. Into the keep net!" : killer ? `${killer} ate you.` : pl?.deathCause === "starvation" ? "You starved." : "A bigger pike got you.";
     return showOnlineDeath(overlay, cause, game.points, respawnOnline, leaveOnline);
   }
   const s = lifeSummary(sim);

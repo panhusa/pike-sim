@@ -1,7 +1,10 @@
 /** One active goal at a time; completing it pays a bonus and draws the next. Pure. */
 export type ChallengeEvent =
   | { type: "catch"; kind: string; lengthCm: number; t: number }
-  | { type: "hunter-survived" };
+  | { type: "hunter-survived" }
+  | { type: "hook-thrown" };
+
+const isFish = (e: ChallengeEvent): boolean => e.type === "catch" && e.kind !== "insect";
 
 export interface ChallengeDef {
   id: string;
@@ -23,7 +26,7 @@ const catchKind = (kind: string, n: number, bonus: number): ChallengeDef => ({
 });
 
 export const CHALLENGES: ChallengeDef[] = [
-  { id: "catch-any-2", text: "Catch 2 fish", bonus: 200, target: 2, step: (e) => (e.type === "catch" ? 1 : 0) },
+  { id: "catch-any-2", text: "Catch 2 fish", bonus: 200, target: 2, step: (e) => (isFish(e) ? 1 : 0) },
   catchKind("roach", 3, 400),
   {
     id: "quick-double",
@@ -31,16 +34,18 @@ export const CHALLENGES: ChallengeDef[] = [
     bonus: 600,
     target: 1,
     step: (e, st) => {
-      if (e.type !== "catch") return 0;
+      if (!isFish(e) || e.type !== "catch") return 0;
       st.times = [...st.times.filter((t) => e.t - t <= 10), e.t];
       return st.times.length >= 2 ? 1 : 0;
     },
   },
   catchKind("perch", 1, 500),
-  { id: "big-one", text: "Catch a fish over 15 cm", bonus: 700, target: 1, step: (e) => (e.type === "catch" && e.lengthCm > 15 ? 1 : 0) },
+  { id: "insects-3", text: "Snap up 3 insects off the surface", bonus: 500, target: 3, step: (e) => (e.type === "catch" && e.kind === "insect" ? 1 : 0) },
+  { id: "big-one", text: "Catch a fish over 15 cm", bonus: 700, target: 1, step: (e) => (isFish(e) && e.type === "catch" && e.lengthCm > 15 ? 1 : 0) },
   { id: "survive", text: "Survive a hunting pike", bonus: 800, target: 1, step: (e) => (e.type === "hunter-survived" ? 1 : 0) },
   catchKind("rudd", 2, 500),
-  { id: "catch-any-5", text: "Catch 5 fish", bonus: 900, target: 5, step: (e) => (e.type === "catch" ? 1 : 0) },
+  { id: "throw-hook", text: "Get hooked by a lure and throw the hook", bonus: 1500, target: 1, step: (e) => (e.type === "hook-thrown" ? 1 : 0) },
+  { id: "catch-any-5", text: "Catch 5 fish", bonus: 900, target: 5, step: (e) => (isFish(e) ? 1 : 0) },
 ];
 
 export class Challenges {

@@ -98,6 +98,14 @@ export class GameHud {
   private stageBar = el("stageBar").firstElementChild as HTMLElement;
   private hearts = el("hearts");
   private lastHearts = -1;
+  private hookBar = el("hookBar");
+  private hookFill = this.hookBar.firstElementChild!.firstElementChild as HTMLElement;
+
+  /** The fight bar while hooked (0..1 escape), hidden when null. */
+  hook(escape: number | null): void {
+    this.hookBar.classList.toggle("show", escape !== null);
+    if (escape !== null) this.hookFill.style.width = `${Math.round(escape * 100)}%`;
+  }
 
   update(s: { hearts: number; points: number; best: number; mult: number; comboLeft: number; goal: string; goalProgress: string; stage: string; stageProgress: number; nextStage: string }): void {
     this.score.textContent = s.points.toLocaleString("en");

@@ -4,10 +4,11 @@ import { preySpeed } from "./prey";
 import type { PikeInput, PikeState } from "./pike";
 import type { Params } from "./params";
 import type { Simulation } from "./simulation";
+import { LURE_LENGTH_CM } from "./extras";
 
 export interface LungeTarget {
   id: number;
-  kind: "prey" | "pike";
+  kind: "prey" | "pike" | "insect" | "lure";
   pos: Vec3;
   distance: number; // m, from the pike's mouth
   edible: boolean;
@@ -30,9 +31,15 @@ export function lungeTargets(sim: Simulation, pk: PikeState): LungeTarget[] {
   const maxLen = p.pike.maxPreyLengthFracOfBL * pk.lengthCm;
   const scored: { t: LungeTarget; score: number }[] = [];
 
-  const consider = (id: number, kind: "prey" | "pike", pos: Vec3, speed: number, lengthCm: number): void => {
-    const sensed = pikeSenses(pk, { pos, speed, lengthCm, inCover: sim.world.coverAt(pos) }, sim.env, p);
-    if (!sensed) return;
+  const consider = (id: number, kind: LungeTarget["kind"], pos: Vec3, speed: number, lengthCm: number): void => {
+    if (kind === "insect") {
+      // a silhouette on the bright surface: seen within a few metres, inside the vision cone
+      const d = Math.hypot(pos.x - pk.pos.x, pos.y - pk.pos.y, pos.z - pk.pos.z);
+      if (d > Math.min(6, sim.env.visibilityM)) return;
+    } else {
+      const sensed = pikeSenses(pk, { pos, speed, lengthCm, inCover: kind === "lure" ? 0 : sim.world.coverAt(pos) }, sim.env, p);
+      if (!sensed) return;
+    }
     const toT = sub(pos, mouth);
     const distance = Math.hypot(toT.x, toT.y, toT.z);
     const cosAngle = distance > 1e-6 ? dot(f, norm(toT)) : 1;
@@ -51,6 +58,12 @@ export function lungeTargets(sim: Simulation, pk: PikeState): LungeTarget[] {
 
   for (const prey of sim.prey) if (prey.alive) consider(prey.id, "prey", prey.pos, preySpeed(prey), prey.lengthCm);
   for (const o of sim.pikes) if (o.alive && o !== pk) consider(o.id, "pike", o.pos, o.speed, o.lengthCm);
+  if (sim.arcade && sim.isHuman(pk)) {
+    const lure = sim.extras.lureLive();
+    if (lure) consider(lure.id, "lure", lure.pos, 0.9, LURE_LENGTH_CM);
+    const nearSurface = pk.pos.y > -0.6;
+    for (const f of sim.extras.insects) if (!f.aloft || nearSurface) consider(f.id, "insect", f.pos, 0.1, 1);
+  }
 
   return scored.sort((a, b) => b.score - a.score || a.t.id - b.t.id).map((s) => s.t);
 }

@@ -5,6 +5,7 @@ import type { Vec3 } from "../sim/math";
 import type { Simulation } from "../sim/simulation";
 import { CameraRig } from "./camera";
 import { seededRng, type RenderCtx } from "./ctx";
+import { buildExtras } from "./extras";
 import { buildFish } from "./fish";
 import { DEFAULT_GFX, type GfxSettings } from "./gfxSettings";
 import { buildParticles } from "./particles";
@@ -27,6 +28,7 @@ export class PikeScene {
   private ambient = new THREE.HemisphereLight(0x8fc4c9, 0x1a2a1d, 0.9);
   private fish: ReturnType<typeof buildFish>;
   private particles: ReturnType<typeof buildParticles>;
+  private extras: ReturnType<typeof buildExtras>;
   private water: ReturnType<typeof buildWater>;
   private terrain: Part;
   private plants: Part & { padSpots: Array<[number, number]> };
@@ -46,7 +48,8 @@ export class PikeScene {
     this.water = buildWater(this.ctx);
     this.terrain = buildTerrain(this.ctx);
     this.plants = buildPlants(this.ctx);
-    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles];
+    this.extras = buildExtras(this.ctx);
+    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras];
     this.resize();
     window.addEventListener("resize", this.onResize);
   }
@@ -67,7 +70,7 @@ export class PikeScene {
     this.plants.dispose();
     this.terrain = buildTerrain(this.ctx);
     this.plants = buildPlants(this.ctx);
-    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles];
+    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras];
   }
 
   private onResize = (): void => this.resize();
@@ -120,6 +123,7 @@ export class PikeScene {
     this.rig.update(player, look, this.ctx.sim.world, dt);
     this.water.update(env, this.rig.position.y);
     this.particles.update(timeS, dt, this.rig.position);
+    this.extras.update(timeS);
     this.renderer.render(this.scene, this.camera);
   }
 }

@@ -13,6 +13,10 @@ are generated in code. There are no image or model files.
 - Quick catches build a combo (up to x5). Goals at the top pay bonuses; growing unlocks new stages.
 - Every few minutes a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.
   A bite costs one of your three hearts; hearts come back over time.
+- Insects fall onto the surface: strike them from just below for a snack. Mayflies dance above the water.
+- Now and then a boat drifts over and an angler casts a lure. It looks like a fish, but a strike gets you
+  **hooked**: mash Strike and swim away from the boat to throw the hook. If you get landed, the angler lets
+  you go only if you have hearts to spare.
 
 **Desktop:** mouse steer · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
 `C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu. "Invert mouse" (start screen or menu) makes pushing the mouse forward dive.

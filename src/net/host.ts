@@ -4,7 +4,7 @@
  * snapshots at SNAPSHOT_HZ.
  */
 import { placePlayerNearPrey, type SimEvent, type Simulation } from "../sim/simulation";
-import { MAX_PLAYERS, packPrey, parseGuestMsg, PROTOCOL_VERSION, SNAPSHOT_HZ, type PikeSnap, type PlayerInfo } from "./protocol";
+import { MAX_PLAYERS, packExtras, packPrey, parseGuestMsg, PROTOCOL_VERSION, SNAPSHOT_HZ, type PikeSnap, type PlayerInfo } from "./protocol";
 import type { HostTransport } from "./transport";
 
 interface Guest {
@@ -17,6 +17,8 @@ interface Guest {
 }
 
 const forGuest = (e: SimEvent, pikeId: number): boolean =>
+  e.type === "angler-arrive" ||
+  e.type === "angler-leave" ||
   ("pikeId" in e && e.pikeId === pikeId) || ((e.type === "hunter-start" || e.type === "hunter-end") && e.targetId === pikeId);
 
 export class NetHost {
@@ -149,7 +151,7 @@ export class NetHost {
         sex: k.sex,
         human: this.sim.isHuman(k),
       }));
-    this.net.broadcast({ t: "snap", time: this.sim.time, pikes, prey: packPrey(this.sim.prey), players: this.players() });
+    this.net.broadcast({ t: "snap", time: this.sim.time, pikes, prey: packPrey(this.sim.prey), players: this.players(), extras: packExtras(this.sim.extras.insects, this.sim.extras.angler) });
   }
 
   close(): void {

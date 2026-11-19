@@ -3,6 +3,7 @@
  * and streams snapshots: pike as small objects, prey packed into an ArrayBuffer (~16 bytes each).
  * Everything received is validated: a malformed or hostile message is dropped, never trusted.
  */
+import type { Angler, Insect, InsectKind, LureState } from "../sim/extras";
 import type { PreyKind } from "../sim/params";
 import type { SimEvent } from "../sim/simulation";
 
@@ -109,12 +110,81 @@ export interface WelcomeMsg {
   pikeId: number;
   settings: unknown;
 }
+/** Insects and the fisherman, compact: [id, kind, x, y, z, aloft]; angler as plain numbers. */
+export type InsectSnap = [number, number, number, number, number, number];
+export interface AnglerSnap {
+  bx: number;
+  bz: number;
+  yaw: number;
+  phase: number;
+  lure: [number, number, number, number, number, number, number, number]; // id, state, x, y, z, vx, vz, t
+  hooked: number; // pike id or -1
+  escape: number;
+  hookedT: number;
+}
+export interface ExtrasSnap {
+  insects: InsectSnap[];
+  angler: AnglerSnap | null;
+}
 export interface SnapMsg {
   t: "snap";
   time: number;
   pikes: PikeSnap[];
   prey: ArrayBuffer;
   players: PlayerInfo[];
+  extras?: ExtrasSnap;
+}
+
+const INSECT_KINDS: InsectKind[] = ["fly", "beetle", "mayfly"];
+const LURE_STATES: LureState[] = ["cast", "sink", "retrieve", "hooked", "gone"];
+const PHASES: Angler["phase"][] = ["arrive", "fish", "leave"];
+const r2 = (v: number): number => Math.round(v * 100) / 100;
+
+export function packExtras(insects: readonly Insect[], a: Angler | null): ExtrasSnap {
+  return {
+    insects: insects.slice(0, 64).map((f) => [f.id, INSECT_KINDS.indexOf(f.kind), r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), f.aloft ? 1 : 0]),
+    angler: a && {
+      bx: r2(a.boat.x),
+      bz: r2(a.boat.z),
+      yaw: r2(a.boatYaw),
+      phase: PHASES.indexOf(a.phase),
+      lure: [a.lure.id, LURE_STATES.indexOf(a.lure.state), r2(a.lure.pos.x), r2(a.lure.pos.y), r2(a.lure.pos.z), r2(a.lure.vel.x), r2(a.lure.vel.z), r2(a.lure.t)],
+      hooked: a.hookedId ?? -1,
+      escape: r2(a.escape),
+      hookedT: r2(a.hookedT),
+    },
+  };
+}
+
+/** Validate and rebuild extras state for the guest mirror. */
+export function unpackExtras(raw: unknown): { insects: Insect[]; angler: Angler | null } | null {
+  if (!isObj(raw) || !Array.isArray(raw.insects)) return null;
+  const n = (v: unknown, lo = -1e4, hi = 1e4) => num(v, lo, hi) ?? 0;
+  const insects: Insect[] = raw.insects
+    .slice(0, 64)
+    .filter((f): f is unknown[] => Array.isArray(f) && f.length === 6)
+    .map((f) => {
+      const kind = INSECT_KINDS[n(f[1], 0, 99)] ?? "fly";
+      return { id: n(f[0], 0, 1e9), kind, pos: { x: n(f[2]), y: n(f[3], -1, 2), z: n(f[4]) }, vel: { x: 0, y: 0, z: 0 }, life: 10, grams: 1, aloft: f[5] === 1 };
+    });
+  let angler: Angler | null = null;
+  const a = raw.angler;
+  if (isObj(a) && Array.isArray(a.lure) && a.lure.length === 8) {
+    const L = a.lure as unknown[];
+    const hooked = n(a.hooked, -1, 1e9);
+    angler = {
+      boat: { x: n(a.bx), y: 0, z: n(a.bz) },
+      boatYaw: n(a.yaw, -100, 100),
+      goal: { x: 0, y: 0, z: 0 },
+      phase: PHASES[n(a.phase, 0, 2)] ?? "fish",
+      left: 0,
+      lure: { id: n(L[0], 0, 1e9), state: LURE_STATES[n(L[1], 0, 4)] ?? "gone", pos: { x: n(L[2]), y: n(L[3], -100, 5), z: n(L[4]) }, vel: { x: n(L[5], -20, 20), y: 0, z: n(L[6], -20, 20) }, t: n(L[7], 0, 1e5), depth: 1 },
+      hookedId: hooked < 0 ? null : hooked,
+      escape: n(a.escape, 0, 1),
+      hookedT: n(a.hookedT, 0, 1e5),
+    };
+  }
+  return { insects, angler };
 }
 export interface EventsMsg {
   t: "ev";
@@ -192,7 +262,7 @@ function parsePikeSnap(v: unknown): PikeSnap | null {
   return { id: id!, x: x!, y: y!, z: z!, yaw: yaw!, pitch: pitch!, speed: speed!, len: len!, weight: weight!, alive: v.alive === true, health: health!, energy: energy!, stomach: stomach!, age: age!, burst: burst!, sex: v.sex === "male" ? "male" : "female", human: v.human === true };
 }
 
-const EVENT_TYPES = new Set(["strike", "capture", "miss", "strike-empty", "death", "bitten", "hunter-start", "hunter-end", "milestone"]);
+const EVENT_TYPES = new Set(["strike", "capture", "miss", "strike-empty", "death", "bitten", "hunter-start", "hunter-end", "milestone", "hooked", "unhooked", "released", "angler-arrive", "angler-leave"]);
 
 export function parseHostMsg(raw: unknown): HostMsg | null {
   if (!isObj(raw)) return null;
@@ -210,7 +280,7 @@ export function parseHostMsg(raw: unknown): HostMsg | null {
         .filter(isObj)
         .map((p) => ({ pikeId: num(p.pikeId, 0, 1e9) ?? -1, name: cleanName(p.name), score: Math.floor(num(p.score, 0, 1e9) ?? 0) }));
       const prey = raw.prey instanceof ArrayBuffer ? raw.prey : ArrayBuffer.isView(raw.prey) ? (raw.prey.buffer.slice(raw.prey.byteOffset, raw.prey.byteOffset + raw.prey.byteLength) as ArrayBuffer) : new ArrayBuffer(0);
-      return { t: "snap", time, pikes, prey, players };
+      return { t: "snap", time, pikes, prey, players, extras: (raw.extras as ExtrasSnap | undefined) ?? undefined };
     }
     case "ev":
       return Array.isArray(raw.events) ? { t: "ev", events: raw.events.filter((e) => isObj(e) && EVENT_TYPES.has(e.type as string)).slice(0, 100) as SimEvent[] } : null;

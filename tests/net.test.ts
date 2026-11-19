@@ -157,3 +157,26 @@ describe("host and guest", () => {
     expect(sim.paramsFor(rival)).toBe(sim.p);
   });
 });
+
+describe("extras snapshot", () => {
+  it("round-trips insects and the fisherman, and drops junk", async () => {
+    const { packExtras, unpackExtras } = await import("../src/net/protocol");
+    const insects = [{ id: 10000001, kind: "mayfly" as const, pos: { x: 1.234, y: 0.2, z: -3 }, vel: { x: 0, y: 0, z: 0 }, life: 9, grams: 0.9, aloft: true }];
+    const angler = {
+      boat: { x: 5, y: 0, z: 6 },
+      boatYaw: 1.2,
+      goal: { x: 0, y: 0, z: 0 },
+      phase: "fish" as const,
+      left: 40,
+      lure: { id: 10000009, state: "hooked" as const, pos: { x: 3, y: -1, z: 4 }, vel: { x: 0.5, y: 0, z: -0.5 }, t: 2, depth: 1 },
+      hookedId: 7,
+      escape: 0.42,
+      hookedT: 3.5,
+    };
+    const back = unpackExtras(JSON.parse(JSON.stringify(packExtras(insects, angler))))!;
+    expect(back.insects[0]).toMatchObject({ id: 10000001, kind: "mayfly", aloft: true, pos: { x: 1.23, y: 0.2, z: -3 } });
+    expect(back.angler).toMatchObject({ phase: "fish", hookedId: 7, escape: 0.42, lure: { state: "hooked", id: 10000009 } });
+    expect(unpackExtras({ insects: "x" })).toBeNull();
+    expect(unpackExtras({ insects: [[1, 99, "a", 0, 0, 0]], angler: { lure: [1] } })).toMatchObject({ insects: [{ kind: "fly", pos: { x: 0 } }], angler: null });
+  });
+});

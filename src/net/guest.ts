@@ -12,7 +12,7 @@ import type { SimSettings } from "../sim/settings";
 import { presetSettings } from "../sim/settings";
 import { defaultParams } from "../sim/params";
 import { Simulation } from "../sim/simulation";
-import { INPUT_HZ, parseHostMsg, unpackPrey, type PikeSnap, type PlayerInfo, type WelcomeMsg } from "./protocol";
+import { INPUT_HZ, parseHostMsg, unpackExtras, unpackPrey, type PikeSnap, type PlayerInfo, type WelcomeMsg } from "./protocol";
 import type { GuestTransport } from "./transport";
 
 const SNAP_ERR_M = 2.5; // own pike further off than this is snapped, not blended
@@ -69,7 +69,14 @@ export class NetGuest {
   private message(raw: unknown): void {
     const m = parseHostMsg(raw);
     if (!m) return;
-    if (m.t === "snap") this.applySnap(m.time, m.pikes, m.prey, m.players);
+    if (m.t === "snap") {
+      this.applySnap(m.time, m.pikes, m.prey, m.players);
+      const ex = unpackExtras(m.extras);
+      if (ex) {
+        this.sim.extras.insects = ex.insects;
+        this.sim.extras.angler = ex.angler;
+      }
+    }
     else if (m.t === "ev") for (const e of m.events) this.sim.events.push(e);
     else if (m.t === "you") {
       this.sim.playerId = m.pikeId;

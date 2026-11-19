@@ -11,13 +11,14 @@ import { growPreyDay, preyMortalityDay } from "./preyLife";
 import { cohortsDay, stepSpawning, type Cohort, type SpawnState } from "./spawning";
 import { World } from "./world";
 import { HUNTER, hunterInput, hunterMinLength, type Hunter } from "./hunter";
+import { ANGLER, Extras, type ExtraEvent } from "./extras";
 
 export type MissReason = "evaded" | "too-big" | "full" | "off-axis";
 
 export type SimEvent =
   | { type: "bolt"; preyId: number; pikeDistance: number; t: number }
   | { type: "strike"; pikeId: number; lockId: number | null; t: number }
-  | { type: "capture"; pikeId: number; preyId: number; kind: PreyKind | "pike"; grams: number; lengthCm: number; t: number }
+  | { type: "capture"; pikeId: number; preyId: number; kind: PreyKind | "pike" | "insect"; grams: number; lengthCm: number; t: number }
   | { type: "miss"; pikeId: number; preyId: number; reason: MissReason; t: number }
   | { type: "strike-empty"; pikeId: number; t: number }
   | { type: "death"; pikeId: number; cause: DeathCause; byPikeId?: number; t: number }
@@ -25,6 +26,7 @@ export type SimEvent =
   | { type: "spawn"; pikeIds: [number, number]; cohortId: number; t: number }
   | { type: "recruit-pike"; cohortId: number; pikeIds: number[]; t: number }
   | { type: "milestone"; id: MilestoneId; t: number }
+  | ExtraEvent
   | { type: "bitten"; pikeId: number; byPikeId: number; health: number; t: number }
   | { type: "hunter-start"; hunterId: number; targetId: number; lengthCm: number; t: number }
   | { type: "hunter-end"; hunterId: number; targetId: number; outcome: NonNullable<Hunter["outcome"]>; t: number };
@@ -63,6 +65,8 @@ export interface SimState {
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+/** Game only: live prey kept topped up to this multiple of each kind's carrying capacity. */
+export const ARCADE_STOCK = 1.25;
 /** Health an arcade bite costs: three bites from full health kill. */
 export const ARCADE_BITE = 0.34;
 /** Arcade health regained per real second while not starving (one bite back in about a minute). */
@@ -96,6 +100,8 @@ export class Simulation {
   arcade = false;
   /** Other human players' pike (multiplayer guests; transient, not saved). They get the arcade tuning like the player. */
   readonly humanIds = new Set<number>();
+  /** Insects and the fisherman (arcade only; transient, own RNG). */
+  extras: Extras;
   /** Active game hunter event (transient, not saved). */
   hunter: Hunter | null = null;
   private arcadeParams: Params | null = null;
@@ -118,6 +124,7 @@ export class Simulation {
     this.rng = new Rng(this.seed);
     this.settings = opts.settings ?? presetSettings("natural", "permadeath", this.p);
     this.world = new World(this.p.world, this.seed * 7919);
+    this.extras = new Extras(this.seed);
     this.startDay = opts.startDay ?? 120; // spring
     this.spawn = { year: Math.floor(this.startDay / this.p.environment.yearLengthDays), openDay: null, dwell: {} };
     this.bioScale = 86400 / this.p.environment.dayLengthS;
@@ -324,11 +331,11 @@ export class Simulation {
     }
   }
 
-  private spawnSchool(kind: PreyKind, count: number, juvenile = false): void {
+  private spawnSchool(kind: PreyKind, count: number, juvenile = false, at?: Vec3): void {
     const spec = this.p.prey[kind];
     const [minL, maxL] = spec.lengthCm as [number, number];
     const id = this.nextSchool++;
-    const centre = this.randomWaterPos(0.5);
+    const centre = at ?? this.randomWaterPos(0.5);
     for (let i = 0; i < count; i++) {
       const L = juvenile ? minL * this.rng.range(0.7, 1) : minL + (maxL - minL) * Math.pow(this.rng.next(), this.p.preyLife.stockSizeSkew);
       const pos = v3(centre.x + this.rng.gauss() * 1.2, centre.y + this.rng.gauss() * 0.4, centre.z + this.rng.gauss() * 1.2);
@@ -374,6 +381,7 @@ export class Simulation {
         this.events.push({ type: "death", pikeId: pk.id, cause: "starvation", t: this.time });
       }
       this.world.confine(pk.pos, 0.1);
+      if (this.arcade && pk.alive) this.extras.afterPikeStep(this, pk, starting, dt, (p) => this.landed(p));
       if (pk.burstTimeLeft <= 0) this.clearAttempts(pk.id);
     }
 
@@ -399,6 +407,10 @@ export class Simulation {
       }
     }
 
+    if (this.arcade) {
+      this.extras.step(this, dt);
+      this.arcadeRestock(dt);
+    }
     for (const pk of live) if (pk.alive && pk.burstTimeLeft > 0) this.resolveStrikes(pk);
     for (const pk of live) if (pk.burstTimeLeft <= 0) pk.lockId = null; // a capture ends the burst inside resolveStrikes
     if (this.hunter) this.stepHunter(dt);
@@ -409,7 +421,25 @@ export class Simulation {
   }
 
   private findLive(id: number): { pos: Vec3 } | undefined {
-    return this.prey.find((f) => f.alive && f.id === id) ?? this.pikes.find((o) => o.alive && o.id === id);
+    return this.prey.find((f) => f.alive && f.id === id) ?? this.pikes.find((o) => o.alive && o.id === id) ?? (this.arcade ? this.extras.find(id) : undefined);
+  }
+
+  /** A human pike reached the fisherman's boat: released with damage if it can spare it, else caught. */
+  private landed(pk: PikeState): void {
+    if (pk.health > ANGLER.releaseHearts + 0.01) {
+      pk.health -= ANGLER.releaseHearts;
+      // dropped back over the side, a little dazed
+      const a = this.extras.angler;
+      const ang = a ? a.boatYaw + Math.PI / 2 : 0;
+      pk.pos = v3(pk.pos.x + Math.cos(ang) * 2.5, -1, pk.pos.z + Math.sin(ang) * 2.5);
+      this.world.confine(pk.pos, 0.2);
+      pk.speed = 0;
+      this.events.push({ type: "released", pikeId: pk.id, health: pk.health, t: this.time });
+      return;
+    }
+    pk.alive = false;
+    pk.deathCause = "caught";
+    this.events.push({ type: "death", pikeId: pk.id, cause: "caught", t: this.time });
   }
 
   private clearAttempts(pikeId: number): void {
@@ -455,6 +485,27 @@ export class Simulation {
     return grams;
   }
 
+  /** Arcade extras for a human strike: the lure hooks it; an insect in reach is eaten. True when handled. */
+  private strikeExtras(pk: PikeState, mouth: Vec3, reach: number, f: Vec3): boolean {
+    const lure = this.extras.lureLive();
+    if (lure && dist(lure.pos, mouth) <= reach && dot(f, norm(sub(lure.pos, pk.pos))) >= this.paramsFor(pk).strike.alignMin) {
+      this.hadOutcome.add(pk.id);
+      this.extras.hook(this, pk);
+      return true;
+    }
+    const key = `${pk.id}:${pk.burstSerial}:insect`;
+    if (this.attempted.has(key)) return false;
+    const room = stomachRoom(pk, this.p);
+    const bug = this.extras.eatInsectAt(mouth, reach * 1.2, pk.pos.y > -0.12);
+    if (!bug) return false;
+    this.attempted.add(key);
+    this.hadOutcome.add(pk.id);
+    const grams = Math.min(bug.grams, Math.max(room, 0.1));
+    pk.stomachG += grams;
+    this.events.push({ type: "capture", pikeId: pk.id, preyId: bug.id, kind: "insect", grams, lengthCm: 2, t: this.time });
+    return true;
+  }
+
   private resolveStrikes(pk: PikeState): void {
     const L = lengthM(pk);
     const pp = this.paramsFor(pk);
@@ -463,6 +514,7 @@ export class Simulation {
     const k = pp.strike;
     // The mouth sits ahead of the body centre.
     const mouth = v3(pk.pos.x + f.x * L * 0.5, pk.pos.y + f.y * L * 0.5, pk.pos.z + f.z * L * 0.5);
+    if (this.arcade && this.isHuman(pk) && this.strikeExtras(pk, mouth, reach, f)) return;
     for (const prey of this.prey) {
       if (!prey.alive || dist(prey.pos, mouth) > reach) continue;
       const spec = this.p.prey[prey.kind];
@@ -510,6 +562,33 @@ export class Simulation {
     cohortsDay(this);
     if (this.env.season === "winter" && this.player()?.alive) this.playerSawWinter = true;
     checkMilestones(this);
+  }
+
+  private restockIn = 0;
+  /**
+   * Game only: keep the lake well stocked (playtests found it emptied fast, rivals eat a lot). Every few
+   * seconds, while live prey are under ARCADE_STOCK x carrying capacity, a school of the scarcest kind
+   * arrives somewhere out of every human's sight.
+   */
+  private arcadeRestock(dt: number): void {
+    this.restockIn -= dt;
+    if (this.restockIn > 0) return;
+    this.restockIn = 6;
+    let best: PreyKind | null = null;
+    let bestFill = ARCADE_STOCK;
+    for (const [kind, cap] of this.capacity) {
+      const fill = this.prey.filter((f) => f.alive && f.kind === kind).length / cap;
+      if (fill < bestFill) [best, bestFill] = [kind, fill];
+    }
+    if (!best) return;
+    const humans = this.pikes.filter((k) => k.alive && this.isHuman(k));
+    for (let i = 0; i < 12; i++) {
+      const c = this.randomWaterPos(0.5);
+      if (humans.every((h) => Math.hypot(h.pos.x - c.x, h.pos.z - c.z) > 14)) {
+        this.spawnSchool(best, 8 + Math.floor(this.rng.next() * 6), false, c);
+        return;
+      }
+    }
   }
 
   /** Logistic recruitment: young fish join the population toward carrying capacity. */

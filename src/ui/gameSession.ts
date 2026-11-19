@@ -14,6 +14,7 @@ import { GameHud, Juice } from "./juice";
 export const heartsOf = (health: number): number => Math.max(0, Math.min(3, Math.ceil(health / ARCADE_BITE - 0.01)));
 
 const BEST_KEY = "pike.best.v1";
+const HOOK_BONUS = 1500;
 const HIT_STOP_S = 0.09;
 const HIT_STOP_SCALE = 0.15;
 
@@ -119,6 +120,30 @@ export class GameSession {
           this.goal(this.goals.push({ type: "hunter-survived" }));
         }
         return;
+      case "angler-arrive":
+        this.audio.warning();
+        this.juice.showBanner("A boat is overhead", "One of those fish is a lure. Look for the line!", "", 3500);
+        return;
+      case "hooked":
+        if (e.pikeId !== pl.id) return;
+        this.audio.bitten();
+        this.juice.flash("rgba(242,184,75,.55)");
+        this.juice.shake(12, 0.5);
+        this.juice.showBanner("HOOKED!", "Mash Strike and swim away from the boat", "danger", 3000);
+        return;
+      case "unhooked":
+        if (e.pikeId !== pl.id) return;
+        this.score.bonus(HOOK_BONUS);
+        this.audio.fanfare();
+        this.juice.flash("rgba(127,232,180,.5)");
+        this.juice.showBanner("You threw the hook!", `+${HOOK_BONUS}`, "good", 3000);
+        this.goal(this.goals.push({ type: "hook-thrown" }));
+        return;
+      case "released":
+        if (e.pikeId !== pl.id) return;
+        this.audio.bitten();
+        this.juice.showBanner("Landed... and released", "The angler let you go. You are hurt.", "danger", 3500);
+        return;
       default:
         return;
     }
@@ -174,6 +199,11 @@ export class GameSession {
       view.camera.fov += (fov - view.camera.fov) * Math.min(1, dt * 8);
       view.camera.updateProjectionMatrix();
     }
+    // hooked: the escape bar fills as the pike fights; the line pulls hard
+    const a = sim.extras.angler;
+    const hooked = playing && pl.alive && a !== null && a.hookedId === pl.id;
+    this.hud.hook(hooked ? a!.escape : null);
+    if (hooked) danger01 = Math.max(danger01, 0.8);
     this.juice.frame(dt, speed01, danger01);
     if (this.score.points > this.best) {
       this.best = this.score.points;
