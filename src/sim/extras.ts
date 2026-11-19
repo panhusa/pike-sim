@@ -122,9 +122,10 @@ export class Extras {
         f.pos.x += Math.sin(f.life * 0.7 + f.id) * 0.15 * dt;
         f.pos.z += Math.cos(f.life * 0.6 + f.id) * 0.15 * dt;
       } else {
-        // stuck in the surface film: drifts and twitches
-        f.pos.x += f.vel.x * dt;
-        f.pos.z += f.vel.z * dt;
+        // stuck in the surface film: drifts (downstream on the river) and twitches
+        const c = sim.world.currentAt(f.pos.x, -0.05, f.pos.z);
+        f.pos.x += (f.vel.x + c.x) * dt;
+        f.pos.z += (f.vel.z + c.z) * dt;
         f.pos.y = -0.01;
         if (this.rng.next() < dt * 0.8) f.vel = v3(this.rng.range(-0.08, 0.08), 0, this.rng.range(-0.08, 0.08));
       }
@@ -182,7 +183,16 @@ export class Extras {
     const dx = a.goal.x - a.boat.x;
     const dz = a.goal.z - a.boat.z;
     const d = Math.hypot(dx, dz);
-    if (a.phase !== "fish" && d > 0.5) {
+    if (a.phase !== "fish" && d > 0.5 && sim.world.shape === "river") {
+      // on the river the boat follows the channel's centreline, then sidles over to its spot
+      const w = sim.world;
+      const ox = a.boat.x;
+      const oz = a.boat.z;
+      a.boat.x += Math.sign(dx) * Math.min(ANGLER.boatSpeed * dt, Math.abs(dx));
+      const tz = Math.abs(a.goal.x - a.boat.x) < 4 ? a.goal.z : w.centreZ(a.boat.x);
+      a.boat.z += (tz - a.boat.z) * Math.min(1, dt * 1.5);
+      if (Math.hypot(a.boat.x - ox, a.boat.z - oz) > 1e-4) a.boatYaw = Math.atan2(a.boat.z - oz, a.boat.x - ox);
+    } else if (a.phase !== "fish" && d > 0.5) {
       const want = Math.atan2(dz, dx);
       a.boatYaw += clamp(Math.atan2(Math.sin(want - a.boatYaw), Math.cos(want - a.boatYaw)), -0.6 * dt, 0.6 * dt);
       const sp = Math.min(ANGLER.boatSpeed, d);
@@ -210,6 +220,10 @@ export class Extras {
     // start at the shore on the far side of the goal
     const ang = Math.atan2(goal.z, goal.x) + Math.PI + this.rng.range(-0.6, 0.6);
     let start = v3(Math.cos(ang) * w.size * 0.45, 0, Math.sin(ang) * w.size * 0.45);
+    if (w.shape === "river") {
+      const x = (goal.x > 0 ? -1 : 1) * (w.size / 2 - 7); // drifts in from the far end
+      start = v3(x, 0, w.centreZ(x));
+    }
     if (!w.inWater(start.x, start.z)) start = this.waterPoint(sim, 0.5);
     this.angler = {
       boat: start,
@@ -228,8 +242,14 @@ export class Extras {
   private leave(sim: Simulation, a: Angler): void {
     a.phase = "leave";
     a.lure.state = "gone";
+    const w = sim.world;
+    if (w.shape === "river") {
+      const x = (a.boat.x > 0 ? 1 : -1) * (w.size / 2 - 5); // off round the nearest bend
+      a.goal = v3(x, 0, w.centreZ(x));
+      return;
+    }
     const ang = Math.atan2(a.boat.z, a.boat.x);
-    a.goal = v3(Math.cos(ang) * sim.world.size * 0.48, 0, Math.sin(ang) * sim.world.size * 0.48);
+    a.goal = v3(Math.cos(ang) * w.size * 0.48, 0, Math.sin(ang) * w.size * 0.48);
   }
 
   private cast(sim: Simulation, a: Angler): void {

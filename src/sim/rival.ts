@@ -32,7 +32,7 @@ export function coverPoints(sim: Simulation): Vec3[] {
   const maxR = w.size / 2 - sim.p.rival.coverEdgeMarginM;
   const out: Vec3[] = [];
   const consider = (x: number, z: number, y: number): void => {
-    if (Math.hypot(x, z) > maxR) return;
+    if (w.shape === "river" ? w.edgeDist(x, z) < sim.p.rival.coverEdgeMarginM : Math.hypot(x, z) > maxR) return;
     const floor = w.bottomY(x, z);
     const pos = v3(x, Math.min(-sim.p.rival.homeSurfaceClearanceM, Math.max(y, floor + sim.p.rival.homeFloorClearanceM)), z);
     if (w.coverAt(pos) >= sim.p.rival.homeMinCover) out.push(pos);

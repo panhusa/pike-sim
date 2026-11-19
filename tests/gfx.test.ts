@@ -6,6 +6,8 @@ import { nearFade, plantCounts } from "../src/render/plants";
 import * as THREE from "three";
 import { SKINS, applyFishSkin, type FishSpecies } from "../src/render/fish";
 import { ANATOMY, DETAIL, FIN, buildFishModel, profile } from "../src/render/fishModel";
+import { World } from "../src/sim/world";
+import { defaultParams } from "../src/sim/params";
 
 const memStorage = (init: Record<string, string> = {}): Storage => {
   const m = new Map(Object.entries(init));
@@ -238,7 +240,7 @@ describe("fish model v2 and skins", () => {
 });
 
 describe("camera rig", () => {
-  const world = { bottomY: () => -6, size: 90 } as never;
+  const world = new World(defaultParams.world, 1); // a real lake (the rig clamps over water)
   const pike = { pos: { x: 0, y: -2, z: 0 }, yaw: 0, pitch: 0, speed: 0, lengthCm: 22 } as never;
   const dist = (mode: CameraMode) => {
     const cam = new THREE.PerspectiveCamera();

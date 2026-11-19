@@ -48,15 +48,7 @@ export function buildAbove(ctx: RenderCtx): { update(timeS: number, dt: number, 
 
   // ---- land: a ring from the bank outward, same rise as the terrain bank, then hills ----
   const rng = ctx.rng(4242);
-  const ph = [rng() * 6.28, rng() * 6.28, rng() * 6.28];
-  const landY = (x: number, z: number): number => {
-    const d = Math.hypot(x, z);
-    const bank = Math.min(5, 0.6 + (d / half - 1) * 6); // the same rise as the terrain bank (terrain.ts) at the rim
-    const a = Math.atan2(z, x);
-    const hills = (Math.sin(a * 3 + ph[0]!) * 0.5 + Math.sin(a * 7 + ph[1]!) * 0.3 + Math.sin(d * 0.05 + a * 2 + ph[2]!) * 0.4 + 1) * 4;
-    const t = THREE.MathUtils.smoothstep(d, half + 6, half + 40);
-    return bank + hills * t - 0.03;
-  };
+  const landY = (x: number, z: number): number => w.bankY(x, z) - 0.03;
   const landGeo = keep(new THREE.RingGeometry(half - 0.5, LAND_OUT, 96, 24));
   landGeo.rotateX(-Math.PI / 2);
   const lp = landGeo.attributes.position!;
@@ -69,8 +61,8 @@ export function buildAbove(ctx: RenderCtx): { update(timeS: number, dt: number, 
     const x = lp.getX(i);
     const z = lp.getZ(i);
     lp.setY(i, landY(x, z));
-    const d = Math.hypot(x, z);
-    c.copy(mud).lerp(grass, THREE.MathUtils.smoothstep(d, half, half + 6)).lerp(dry, (Math.sin(x * 0.13) * Math.sin(z * 0.11) + 1) * 0.18);
+    const e = -w.edgeDist(x, z);
+    c.copy(mud).lerp(grass, THREE.MathUtils.smoothstep(e, 0, 6)).lerp(dry, (Math.sin(x * 0.13) * Math.sin(z * 0.11) + 1) * 0.18);
     lc.set([c.r, c.g, c.b], i * 3);
   }
   landGeo.setAttribute("color", new THREE.BufferAttribute(lc, 3));
@@ -100,11 +92,16 @@ export function buildAbove(ctx: RenderCtx): { update(timeS: number, dt: number, 
   const p = new THREE.Vector3();
   const place = (): [number, number, number] => {
     // dense near the shore, thinning outward; never in the water
-    const a = rng() * Math.PI * 2;
-    const d = half + 2.5 + Math.pow(rng(), 1.6) * 70;
-    const x = Math.cos(a) * d;
-    const z = Math.sin(a) * d;
-    return [x, landY(x, z) - 0.1, z];
+    for (let k = 0; k < 60; k++) {
+      const a = rng() * Math.PI * 2;
+      const d = Math.sqrt(rng()) * (half + 75);
+      const x = Math.cos(a) * d;
+      const z = Math.sin(a) * d;
+      const e = -w.edgeDist(x, z);
+      if (e < 2.5 || e > 75 || rng() > Math.exp(-e / 28)) continue;
+      return [x, landY(x, z) - 0.1, z];
+    }
+    return [0, -50, 0]; // (never in practice) hidden under the lakebed
   };
   for (let i = 0; i < pineN; i++) {
     const [x, y, z] = place();

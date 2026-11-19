@@ -9,6 +9,7 @@ import { condition, hunger, type PikeInput, type PikeState } from "./sim/pike";
 import { restBlockers, restFor, type RestBlocker } from "./sim/rest";
 import { parseSave, toSaveFile } from "./sim/save";
 import { presetSettings, type SimSettings } from "./sim/settings";
+import type { MapShape } from "./sim/world";
 import { placePlayerNearPrey, Simulation, type MissReason, type SimEvent } from "./sim/simulation";
 import { lungeTargets } from "./sim/lunge";
 import { AdaptiveResolution, stepPlan } from "./ui/frameBudget";
@@ -294,7 +295,8 @@ addEventListener("pagehide", () => autosave());
 // --- life flow ---
 function settingsFrom(c: NewLifeConfig): SimSettings {
   const base = presetSettings(c.preset === "custom" ? "natural" : c.preset, c.deathMode, defaultParams);
-  return c.preset === "custom" ? { ...base, rivalCount: c.rivalCount, rivalSizeScale: c.rivalSizeScale, aggression: c.aggression } : base;
+  const s = c.preset === "custom" ? { ...base, rivalCount: c.rivalCount, rivalSizeScale: c.rivalSizeScale, aggression: c.aggression } : base;
+  return { ...s, map: c.map };
 }
 
 function warnSaveFailed(): void {
@@ -340,7 +342,7 @@ function newLife(settings: SimSettings, seed: number): void {
 }
 
 // --- multiplayer flow ---
-async function hostGame(name: string): Promise<void> {
+async function hostGame(name: string, map: MapShape = "lake"): Promise<void> {
   saveName(name);
   let code = makeRoomCode();
   let t;
@@ -352,7 +354,7 @@ async function hostGame(name: string): Promise<void> {
       throw new Error(`Could not open a lake (${e instanceof Error ? e.message : "no connection"}). Check your internet connection.`);
     });
   }
-  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: presetSettings("gentle", "permadeath", defaultParams) });
+  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map } });
   s.addPlayer(s.p.pike.startLengthCm);
   s.arcade = true;
   placePlayerNearPrey(s);
@@ -361,7 +363,7 @@ async function hostGame(name: string): Promise<void> {
   net = { kind: "host", host };
   pendingPermission = motionPermission();
   enter(s);
-  say(`Your lake code is ${code}. Friends join with it.`, 12000);
+  say(`Your code is ${code}. Friends join with it.`, 12000);
 }
 
 async function joinGame(name: string, rawCode: string): Promise<void> {

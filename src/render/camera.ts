@@ -139,12 +139,7 @@ export class CameraRig {
     const ceilWant = player.pos.y > -0.05 ? 2.5 : -0.12;
     this.ceil += (ceilWant - this.ceil) * (1 - Math.exp(-(ceilWant > this.ceil ? 6 : 14) * dt));
     this.pos.y = Math.min(this.ceil, Math.max(bottom, this.pos.y));
-    const r = Math.hypot(this.pos.x, this.pos.z);
-    const maxR = world.size / 2 - 1;
-    if (r > maxR) {
-      this.pos.x *= maxR / r;
-      this.pos.z *= maxR / r;
-    }
+    world.clampXZ(this.pos, 1);
     this.cam.position.copy(this.pos);
     // look ahead of the head in the swimming direction, smoothed: on turns the fish slides off-centre
     const lead = s.lead * L * Math.min(1.5, 0.4 + player.speed / Math.max(L, 0.05) / 4);

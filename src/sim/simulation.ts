@@ -127,7 +127,7 @@ export class Simulation {
     this.seed = opts.seed ?? 1;
     this.rng = new Rng(this.seed);
     this.settings = opts.settings ?? presetSettings("natural", "permadeath", this.p);
-    this.world = new World(this.p.world, this.seed * 7919);
+    this.world = new World(this.p.world, this.seed * 7919, this.settings.map === "river" ? "river" : "lake");
     this.extras = new Extras(this.seed);
     this.startDay = opts.startDay ?? 120; // spring
     this.spawn = { year: Math.floor(this.startDay / this.p.environment.yearLengthDays), openDay: null, dwell: {} };
@@ -376,7 +376,10 @@ export class Simulation {
       if (flying) {
         pk.burstCooldown = Math.max(0, pk.burstCooldown - dt);
         pk.burstTimeLeft = Math.max(0, pk.burstTimeLeft - dt);
-      } else stepPike(pk, input, this.env.tempC, dt, this.paramsFor(pk), this.bioScale);
+      } else {
+        stepPike(pk, input, this.env.tempC, dt, this.paramsFor(pk), this.bioScale);
+        if (this.world.shape === "river") this.drift(pk.pos, dt);
+      }
       if (this.arcade && this.isHuman(pk) && pk.alive && pk.health < 1 && condition(pk, this.p) >= 0.8)
         pk.health = Math.min(1, pk.health + ARCADE_HEAL_PER_S * dt);
       if (before > 0 && pk.burstTimeLeft <= 0) {
@@ -410,6 +413,7 @@ export class Simulation {
     for (const f of this.prey) {
       if (!f.alive) continue;
       const mates = schools.get(f.schoolId) ?? [];
+      if (this.world.shape === "river" && f.alive) this.drift(f.pos, dt);
       if (stepPrey(f, mates, live, this.env, this.world, dt, this.rng, this.p, noticeOf)) {
         const nearest = live.reduce((m, k) => Math.min(m, dist(k.pos, f.pos)), Infinity);
         this.events.push({ type: "bolt", preyId: f.id, pikeDistance: nearest, t: this.time });
@@ -512,6 +516,13 @@ export class Simulation {
     this.hadOutcome.add(pk.id);
     this.feedInsect(pk, bug);
     return true;
+  }
+
+  /** River current carries a fish (it swims against it to hold station). */
+  drift(pos: Vec3, dt: number): void {
+    const c = this.world.currentAt(pos.x, pos.y, pos.z);
+    pos.x += c.x * dt;
+    pos.z += c.z * dt;
   }
 
   /** An insect goes down: grams into the stomach (always a little room for a bug) and a capture event. */
@@ -667,8 +678,13 @@ export function placePlayerNearPrey(sim: Simulation, gapM = 7, pike: PikeState |
     if (d < bd) [bd, best] = [d, f];
   }
   if (!best || bd <= gapM) return;
-  const r = Math.hypot(best.pos.x, best.pos.z) || 1;
-  pl.pos = v3(best.pos.x - (best.pos.x / r) * gapM, best.pos.y, best.pos.z - (best.pos.z / r) * gapM);
+  if (sim.world.shape === "river") {
+    // upstream of the fish, facing down at it: the current carries you in
+    pl.pos = v3(best.pos.x - gapM, best.pos.y, best.pos.z);
+  } else {
+    const r = Math.hypot(best.pos.x, best.pos.z) || 1;
+    pl.pos = v3(best.pos.x - (best.pos.x / r) * gapM, best.pos.y, best.pos.z - (best.pos.z / r) * gapM);
+  }
   sim.world.confine(pl.pos, 0.3);
   pl.yaw = Math.atan2(best.pos.z - pl.pos.z, best.pos.x - pl.pos.x);
   pl.pitch = 0;

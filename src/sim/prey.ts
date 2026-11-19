@@ -233,9 +233,22 @@ export function stepPrey(
       f.coverTarget = null;
     }
     // Hold the school inside the basin
-    const r = Math.hypot(f.pos.x, f.pos.z);
-    const edge = world.size / 2 - 6;
-    if (r > edge) desire = add(desire, v3((-f.pos.x / r) * (r - edge) * 0.5, 0, (-f.pos.z / r) * (r - edge) * 0.5));
+    if (world.shape === "river") {
+      const e = world.edgeDist(f.pos.x, f.pos.z);
+      const hw = world.halfWidth(f.pos.x);
+      const keep = Math.min(4, hw * 0.5);
+      if (e < keep) {
+        const d = world.inward(f.pos.x, f.pos.z);
+        desire = add(desire, v3(d.x * (keep - e) * 0.5, 0, d.z * (keep - e) * 0.5));
+      }
+      // rheotaxis: river fish face into the current and hold station
+      const c = world.currentAt(f.pos.x, f.pos.y, f.pos.z);
+      desire = add(desire, v3(-c.x * 1.5, 0, -c.z * 1.5));
+    } else {
+      const r = Math.hypot(f.pos.x, f.pos.z);
+      const edge = world.size / 2 - 6;
+      if (r > edge) desire = add(desire, v3((-f.pos.x / r) * (r - edge) * 0.5, 0, (-f.pos.z / r) * (r - edge) * 0.5));
+    }
     desire = norm(desire);
   }
 

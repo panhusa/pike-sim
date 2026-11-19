@@ -1,6 +1,7 @@
 import { MILESTONE_TEXT, type MilestoneId } from "../sim/milestones";
 import type { LifeSummary } from "../sim/lifecycle";
 import type { DangerPreset, DeathMode } from "../sim/settings";
+import type { MapShape } from "../sim/world";
 import type { Simulation } from "../sim/simulation";
 
 const SEASONS = { winter: "Winter", spring: "Spring", summer: "Summer", autumn: "Autumn" } as const;
@@ -17,6 +18,13 @@ export interface NewLifeConfig {
   rivalSizeScale: number;
   aggression: number;
   seed: number;
+  map: MapShape;
+}
+
+function mapSelect(): HTMLSelectElement {
+  const sel = h("select", {});
+  sel.append(h("option", { value: "lake", textContent: "Lake: still water, reed beds, deep middle" }), h("option", { value: "river", textContent: "River: current, deep pools and fast riffles" }));
+  return sel;
 }
 
 export interface ControlsPref {
@@ -87,6 +95,7 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
   const size = slider(0.6, 1.5, 0.05, 1);
   const aggr = slider(0.3, 2, 0.05, 1);
   const seed = h("input", { type: "number", value: String(defaultSeed ?? Math.floor(Math.random() * 1e9)) });
+  const map = mapSelect();
   const custom = h("div", { className: "custom" });
   const row = (label: string, input: HTMLInputElement): HTMLElement => {
     const val = h("span", { textContent: input.value });
@@ -105,15 +114,16 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
       rivalSizeScale: Number(size.value),
       aggression: Number(aggr.value),
       seed: Number(seed.value) || 1,
+      map: map.value === "river" ? "river" : "lake",
     });
   });
-  return h("div", { className: "form" }, h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom, h("label", {}, "Seed ", seed), go);
+  return h("div", { className: "form" }, h("label", {}, "Water ", map), h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom, h("label", {}, "Seed ", seed), go);
 }
 
 export interface OnlineHandlers {
   name: string;
   /** resolves when the lake is open; rejects with a readable message */
-  onHost(name: string): Promise<void>;
+  onHost(name: string, map: MapShape): Promise<void>;
   onJoin(name: string, code: string): Promise<void>;
 }
 
@@ -133,9 +143,10 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
     status.textContent = e instanceof Error ? e.message : String(e);
     status.className = "warn";
   };
-  const hostBtn = button("Host a lake", () => {
+  const hostMap = mapSelect();
+  const hostBtn = button("Host", () => {
     busy(true, "Opening a lake…");
-    o.onHost(name.value).catch(fail);
+    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake").catch(fail);
   });
   const joinBtn = button(
     "Join",
@@ -151,8 +162,8 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
     h("b", { textContent: "Play with friends" }),
     p("Share a lake with up to 5 friends: hunt the same fish, race for score, and watch out for bigger players. One of you hosts and reads out the code."),
     h("label", {}, "Name ", name),
-    hostBtn,
-    h("label", {}, "Lake code ", code, " ", joinBtn),
+    h("label", {}, "Water ", hostMap, " ", hostBtn),
+    h("label", {}, "Code ", code, " ", joinBtn),
     status,
   );
 }

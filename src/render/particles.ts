@@ -23,6 +23,7 @@ export function buildParticles(ctx: RenderCtx): { update(timeS: number, dt: numb
   const p = new THREE.Points(g, mat);
   p.frustumCulled = false;
   ctx.scene.add(p);
+  const river = ctx.sim.world.shape === "river";
   return {
     update(timeS, dt, cam) {
       const pa = g.attributes.position as THREE.BufferAttribute;
@@ -30,6 +31,12 @@ export function buildParticles(ctx: RenderCtx): { update(timeS: number, dt: numb
         let x = pa.getX(i) + Math.sin(timeS * 0.3 + i) * 0.1 * dt;
         let z = pa.getZ(i) + Math.cos(timeS * 0.25 + i * 1.3) * 0.1 * dt;
         let y = pa.getY(i) + 0.03 * dt;
+        if (river) {
+          // suspended specks ride the current: the clearest cue of which way the river flows
+          const c = ctx.sim.world.currentAt(x, y, z);
+          x += c.x * dt;
+          z += c.z * dt;
+        }
         if (Math.abs(x - cam.x) > 15) x = cam.x + (Math.random() - 0.5) * 28;
         if (Math.abs(z - cam.z) > 15) z = cam.z + (Math.random() - 0.5) * 28;
         if (y > 0) y = -6;

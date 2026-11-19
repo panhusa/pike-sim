@@ -118,6 +118,7 @@ export function buildPlants(ctx: RenderCtx): { dispose(): void; padSpots: Array<
   const perReed = w.reeds.length ? counts.reedBlades / w.reeds.length : 0;
   const perWeed = w.weeds.length ? counts.weedFronds / w.weeds.length : 0;
   const edge = (w.size / 2) * 0.99;
+  const outside = (x: number, z: number): boolean => (w.shape === "river" ? w.edgeDist(x, z) < 0.4 : Math.hypot(x, z) > edge);
   const tmp = new THREE.Object3D();
   tmp.rotation.order = "YXZ";
   const col = new THREE.Color();
@@ -154,7 +155,7 @@ export function buildPlants(ctx: RenderCtx): { dispose(): void; padSpots: Array<
       const x = r.x + Math.cos(a) * d;
       const z = r.z + Math.sin(a) * d;
       const bottom = w.bottomY(x, z);
-      if (Math.hypot(x, z) > edge) {
+      if (outside(x, z)) {
         rr(); rr(); rr(); rr(); rr(); rr(); rr();
         continue;
       }
@@ -233,7 +234,7 @@ export function buildPlants(ctx: RenderCtx): { dispose(): void; padSpots: Array<
       const yaw = lr() * Math.PI * 2;
       const tint = lr();
       const depth = w.depthAt(x, z);
-      if (Math.hypot(x, z) > edge || depth < 0.2 || depth > 2.5) continue;
+      if (outside(x, z) || depth < 0.2 || depth > 2.5) continue;
       tmp.position.set(x, -0.01, z);
       tmp.rotation.set(0, yaw, 0);
       tmp.scale.set(s, 1, s);

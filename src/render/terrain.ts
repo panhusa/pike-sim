@@ -117,10 +117,10 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const r = Math.hypot(x, z) / (w.size / 2);
     const d = w.depthAt(x, z);
-    pos.setY(i, r >= 1 ? 0.6 + (r - 1) * 6 : -d);
-    if (r >= 1) c.copy(bank);
+    const dry = w.shape === "river" ? d <= 0 : Math.hypot(x, z) / (w.size / 2) >= 1;
+    pos.setY(i, dry ? w.bankY(x, z) : -d);
+    if (dry) c.copy(bank);
     else {
       const slope = Math.hypot(w.depthAt(x + e, z) - w.depthAt(x - e, z), w.depthAt(x, z + e) - w.depthAt(x, z - e)) / (2 * e);
       const deep = clamp01(d / (w.maxDepth * 0.8));
@@ -157,6 +157,7 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
     const rad = Math.sqrt(sr()) * (w.size / 2) * 0.96;
     const x = Math.cos(a) * rad;
     const z = Math.sin(a) * rad;
+    if (w.shape === "river" && !w.inWater(x, z)) continue;
     const shallow = 1 - w.depthAt(x, z) / w.maxDepth;
     if (sr() > 0.12 + 0.88 * shallow * shallow) continue;
     spots.push({ x, z, s: 0.05 + Math.pow(sr(), 2.4) * 0.28 });
@@ -210,7 +211,7 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
       const d = Math.sqrt(tr()) * r.radius * 1.5;
       const x = r.x + Math.cos(a) * d;
       const z = r.z + Math.sin(a) * d;
-      if (Math.hypot(x, z) > (w.size / 2) * 0.97) continue;
+      if (w.shape === "river" ? !w.inWater(x, z) : Math.hypot(x, z) > (w.size / 2) * 0.97) continue;
       const s = 0.7 + tr() * 1.1;
       tmp.position.set(x, w.bottomY(x, z) + 0.012, z);
       tmp.rotation.set(-Math.PI / 2 + (tr() - 0.5) * 0.3, tr() * Math.PI * 2, 0);

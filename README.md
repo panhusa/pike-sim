@@ -1,6 +1,6 @@
 # Pike
 
-You are a young northern pike in a small lake. Hunt, grow from a 22 cm fry-hunter into a lake tyrant,
+You are a young northern pike in a small lake or a river. Hunt, grow from a 22 cm fry-hunter into a lake tyrant,
 and get away when a bigger pike comes after you. Play alone or share a lake with up to 5 friends.
 
 **Play:** https://panhusa.github.io/pike-sim/ (desktop or phone, nothing to install)
@@ -9,6 +9,8 @@ Everything you see is procedural: the lake, plants, light and every fish (anatom
 are generated in code. There are no image or model files.
 
 ## How to play
+- Pick the **water** when you start: the **lake** (still, reed beds, a deep middle) or the **river**
+  (a current that carries you downstream, deep slow pools and wide fast riffles; fish hold against the flow).
 - Fish near you get a ring. **Green** = in reach, strike now. **Amber** = edible, get closer. **Grey** = too big.
 - Quick catches build a combo (up to x5). Goals at the top pay bonuses; growing unlocks new stages.
 - Every few minutes a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.
@@ -27,7 +29,7 @@ are generated in code. There are no image or model files.
 Tilt steering can be chosen on the start screen.
 
 ## Multiplayer
-One player clicks **Host a lake** and reads out the 5-letter code; friends enter it and click **Join**.
+One player picks lake or river, clicks **Host** and reads out the 5-letter code; friends enter it and click **Join**.
 Browsers connect directly (WebRTC); the public [PeerJS](https://peerjs.com) broker only introduces them,
 and no game data goes through any server. The host's browser runs the lake, so keep that tab open.
 Strict corporate or some mobile networks can block direct connections.
