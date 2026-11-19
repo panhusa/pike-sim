@@ -26,6 +26,7 @@ import { hostRoom, joinRoom } from "./net/transport";
 import { isTouchDevice, loadControlMode, mountTouchControls, requestMotionPermission, saveControlMode, type ControlMode, type TouchControls, type TouchInput } from "./ui/touch";
 import { persistDeath, persistNewLife } from "./ui/policy";
 import { browserStorage, createSaveStore } from "./ui/storage";
+import { GamepadInput, type PadState } from "./ui/gamepad";
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $("c") as HTMLCanvasElement;
@@ -148,6 +149,14 @@ const BOTTOM_ASSIST_M = 0.6;
 /** Body attitude at the last input step: a lunge turns the body, and the wanted heading turns with it (mouse input kept). */
 let lastBodyYaw = 0;
 let lastBodyPitch = 0;
+/** Keyboard / gamepad pitch: hold to dive or rise (up to this angle), the pike levels out again on release. */
+const HOLD_PITCH = 0.75;
+const HOLD_PITCH_RATE = 2;
+const LEVEL_RATE = 1.5;
+/** true while the pitch comes from keys or a stick (it then levels out on release); mouse movement clears it */
+let pitchHeld = false;
+const gamepad = new GamepadInput();
+let pad: PadState = gamepad.read([]);
 const mousePref = {
   get invertY() {
     return invertMouse;
@@ -220,6 +229,7 @@ addEventListener("mousemove", (e) => {
   const k = MOUSE_RAD_PER_PX * mouseSens;
   const pl = sim?.player();
   wantYaw += e.movementX * k;
+  if (e.movementY) pitchHeld = false;
   if (pl) wantYaw = pl.yaw + clamp(angleDiff(wantYaw, pl.yaw), -MAX_LEAD, MAX_LEAD);
   wantPitch = clamp(wantPitch - e.movementY * k * (invertMouse ? -1 : 1), -0.9, 0.9);
 });
@@ -261,7 +271,7 @@ function stickContext(): { yaw: number; pitch: number; camYaw: number } | undefi
 }
 
 function playerInput(pl: PikeState): PikeInput {
-  const kbThrottle = keys.has("KeyW") || keys.has("ArrowUp") ? (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.25 : 1) : 0;
+  const kbThrottle = Math.max(pad.throttle, keys.has("KeyW") || keys.has("ArrowUp") ? (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.25 : 1) : 0);
   const burst = burstQueued || !!touchIn?.burst;
   burstQueued = false;
   if (touchIn) touchIn.burst = false; // edge-triggered: one strike per press, not one per sim step
@@ -642,8 +652,10 @@ function simulate(s: Simulation, pl: PikeState, frameDt: number): string {
   let blockedText = "";
   touchIn = touch?.read(stickContext()) ?? null;
   if (touchIn && !touchIn.rest) restLatch = false;
-  if ((keys.has("KeyR") || touchIn?.rest) && !restLatch && net) blockedText = "No resting in a shared lake";
-  else if ((keys.has("KeyR") || touchIn?.rest) && !restLatch) {
+  if (pad.connected && !pad.rest && !keys.has("KeyR")) restLatch = false;
+  const restHeld = keys.has("KeyR") || !!touchIn?.rest || pad.rest;
+  if (restHeld && !restLatch && net) blockedText = "No resting in a shared lake";
+  else if (restHeld && !restLatch) {
     const blockers = restBlockers(s).filter((b) => b !== "dead");
     if (blockers.length === 0) {
       const stop = restFor(s, s.p.rest.bioSecondsPerFrame);
@@ -758,9 +770,58 @@ function probeQuality(dt: number): void {
   adaptiveRes = new AdaptiveResolution(view.renderer.getPixelRatio());
 }
 let last = performance.now();
+/** The overlay's main button (keyboard Enter / gamepad A on a menu): resume, continue, respawn or start. */
+function overlayDefault(): HTMLButtonElement | null {
+  const btns = [...overlay.querySelectorAll("button")];
+  for (const label of ["Resume", "Continue", "Respawn", "Start a new life"]) {
+    const b = btns.find((x) => x.textContent === label && !x.disabled);
+    if (b) return b;
+  }
+  return null;
+}
+addEventListener("keydown", (e) => {
+  if (e.code !== "Enter" || mode === "playing" || overlay.style.display === "none") return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "BUTTON")) return; // native Enter there
+  overlayDefault()?.click();
+});
+
+/** Gamepad buttons and keyboard/stick steering, once per rendered frame. */
+function padAndKeys(frameDt: number): void {
+  pad = gamepad.read();
+  if (pad.minimap) say(minimap.toggle() ? "Minimap on" : "Minimap off");
+  if (mode !== "playing") {
+    if (pad.pause && mode === "paused") overlayDefault()?.click();
+    else if (pad.strike) overlayDefault()?.click();
+    return;
+  }
+  if (pad.pause) return pause();
+  if (pad.camera) nextCamera();
+  if (pad.strike) burstQueued = true;
+  const pl = sim?.player();
+  if (!pl || !view || touchIn) return;
+  view.rig.orbit += pad.orbit * 1.6 * frameDt;
+  const kbTurn = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
+  const turn = kbTurn || pad.turn * 1.3;
+  if (turn) wantYaw = pl.yaw + clamp(angleDiff(wantYaw + turn * KB_TURN_RAD_S * frameDt, pl.yaw), -MAX_LEAD, MAX_LEAD);
+  const kbPitch = (keys.has("KeyF") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
+  const pitch = kbPitch || pad.pitch * (invertMouse ? -1 : 1);
+  const move = (target: number, rate: number): void => {
+    wantPitch += clamp(target - wantPitch, -rate * frameDt, rate * frameDt);
+  };
+  if (pitch) {
+    pitchHeld = true;
+    move(pitch * HOLD_PITCH, HOLD_PITCH_RATE);
+  } else if (pitchHeld) {
+    move(0, LEVEL_RATE);
+    if (wantPitch === 0) pitchHeld = false;
+  }
+}
+
 function frame(now: number): void {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  padAndKeys(frameDt);
   if (sim && view) {
     let restText = "";
     const alive = !!sim.player()?.alive;
@@ -789,10 +850,6 @@ function frame(now: number): void {
     const ratio = mode === "playing" ? adaptiveRes?.frame(frameDt) : null;
     if (ratio) view.setPixelRatio(ratio);
     if (mode === "playing") view.rig.orbit += ((keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0)) * 1.6 * frameDt;
-    if (mode === "playing" && !touchIn) {
-      const kbTurn = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
-      if (kbTurn) wantYaw = pl.yaw + clamp(angleDiff(wantYaw + kbTurn * KB_TURN_RAD_S * frameDt, pl.yaw), -MAX_LEAD, MAX_LEAD);
-    }
     game.frame(frameDt, sim, pl, view, mode === "playing" && !restText.startsWith("Resting")); // no hunter clock during rest
     updateHud(sim, pl, restText);
     updateHunting(sim, pl, view, mode === "playing");

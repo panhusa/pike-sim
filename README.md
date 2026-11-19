@@ -25,9 +25,13 @@ are generated in code. There are no image or model files.
   **hooked**: mash Strike and swim away from the boat to throw the hook. If you get landed, the angler lets
   you go only if you have hearts to spare.
 
-**Desktop:** mouse steer · `A`/`D` (or arrows) turn · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
+**Desktop:** mouse steer · `A`/`D` (or arrows) turn · `S`/`F` dive/rise · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
 `C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu. "Invert mouse" (start screen or menu) makes pushing the mouse forward dive;
 "Mouse sensitivity" sets how far the pike turns per mouse movement. A strike aims at the fish for a split second, then shoots straight.
+
+**No mouse:** the keyboard alone works (`A`/`D` turn, `S`/`F` dive/rise, `W` swim, `Space` strike, `Enter` on a menu),
+and so does a gamepad: left stick steer, RT swim, LT stalk, A/RB strike, B rest, Y camera, right stick orbit,
+Start pause, Back minimap, A on a menu to resume/continue/start.
 
 **Phone:** joystick to steer and swim (push further to go faster) · Strike · Rest · Cam · Pause.
 Tilt steering can be chosen on the start screen.
