@@ -2,18 +2,20 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { RenderCtx } from "./ctx";
 import type { GfxQuality } from "./gfxSettings";
+import { BIG } from "../sim/world";
 import { nearFade, plantFragment, plantFragmentPars, plantVertex, plantVertexPars } from "./shaders/plantFade.glsl";
 import { applyCaustics, applyWater } from "./water";
 
 export { nearFade };
 
 /** Instance counts per quality: high is 40 blades per reed patch and 24 fronds per weed bed, low is half. */
-export function plantCounts(q: GfxQuality, reeds: number, weeds: number): { reedBlades: number; weedFronds: number; lilyPads: number } {
+/** `perBed` scales blades/fronds per bed (BIG.bladesPerBed on the game-size water); lily pads stay per bed. */
+export function plantCounts(q: GfxQuality, reeds: number, weeds: number, perBed = 1): { reedBlades: number; weedFronds: number; lilyPads: number } {
   const k = q === "low" ? 0.5 : 1;
   return {
-    reedBlades: Math.round(reeds * 40 * k),
-    weedFronds: Math.round(weeds * 24 * k),
-    lilyPads: Math.round((reeds + weeds) * 5 * k),
+    reedBlades: Math.round(reeds * 40 * k * perBed),
+    weedFronds: Math.round(weeds * 24 * k * perBed),
+    lilyPads: Math.round((reeds + weeds) * (perBed > 1 ? 3 : 5) * k),
   };
 }
 
@@ -114,7 +116,7 @@ function padGeometry(): THREE.BufferGeometry {
 /** Reeds (blades), bottom weed (milfoil fronds) and lily pads with stems. Placement is seeded per world. */
 export function buildPlants(ctx: RenderCtx): { dispose(): void; padSpots: Array<[number, number]> } {
   const w = ctx.sim.world;
-  const counts = plantCounts(ctx.gfx.quality, w.reeds.length, w.weeds.length);
+  const counts = plantCounts(ctx.gfx.quality, w.reeds.length, w.weeds.length, w.big ? BIG.bladesPerBed : 1);
   const perReed = w.reeds.length ? counts.reedBlades / w.reeds.length : 0;
   const perWeed = w.weeds.length ? counts.weedFronds / w.weeds.length : 0;
   const edge = (w.size / 2) * 0.99;

@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import type { Environment } from "../sim/environment";
 import type { RenderCtx } from "./ctx";
-import type { GfxStyle } from "./gfxSettings";
+import type { GfxQuality, GfxStyle } from "./gfxSettings";
 import { absorptionFragment, absorptionPars, absorptionVertex, absorptionVertexPars } from "./shaders/absorption.glsl";
+import { toonFragment } from "./shaders/toon.glsl";
 import { causticFragment, causticFragmentPars, causticVertex, causticVertexPars } from "./shaders/caustics.glsl";
 import { snellFragment, snellVertex } from "./shaders/snell.glsl";
 
@@ -14,6 +15,8 @@ export interface WaterLook {
   deep: RGB;
   density: number;
   ambientFloor: number;
+  /** Flat depth bands for the stylised look; 0 = smooth gradient. */
+  bands: number;
 }
 
 const hex = (h: number): RGB => [((h >> 16) & 255) / 255, ((h >> 8) & 255) / 255, (h & 255) / 255];
@@ -54,12 +57,20 @@ export function waterLook(env: Pick<Environment, "light" | "season" | "visibilit
     deep: grade(mixRGB(NIGHT_DEEP, DAY_DEEP, t), tint, style),
     density: 2.2 / Math.max(env.visibilityM, 1.5),
     ambientFloor: 0.03 + 0.22 * (1 - t) + (style === "stylised" ? 0.02 : 0),
+    bands: style === "stylised" ? STYLISED_BANDS : 0,
   };
+}
+
+export const STYLISED_BANDS = 4;
+
+/** Depth fraction, quantised to `bands` flat steps when bands > 1 (same as the GLSL waterTint). */
+export function bandDepth(t: number, bands: number): number {
+  return bands > 1 ? Math.min(Math.floor(t * bands), bands - 1) / (bands - 1) : t;
 }
 
 /** Water colour at a depth: shallow to deep by depth/maxDepth, smoothstepped (same as the GLSL waterTint). */
 export function absorptionColor(depthM: number, look: WaterLook, maxDepth: number): RGB {
-  return mixRGB(look.shallow, look.deep, smooth(clamp01(depthM / maxDepth)));
+  return mixRGB(look.shallow, look.deep, smooth(bandDepth(clamp01(depthM / maxDepth), look.bands)));
 }
 
 /** Uniforms shared by every material that applyWater touches and by the surface shader. Colours are linear. */
@@ -76,6 +87,9 @@ export interface WaterUniforms {
   uAirHorizon: { value: THREE.Color };
   /** Unit vector toward the sun. */
   uSunDir: { value: THREE.Vector3 };
+  /** Stylised look: flat depth bands (0 = smooth) and the 3-band toon light ramp (0 off, 1 on). */
+  uWaterBands: { value: number };
+  uToon: { value: number };
 }
 
 export function createWaterUniforms(maxDepth: number): WaterUniforms {
@@ -89,6 +103,8 @@ export function createWaterUniforms(maxDepth: number): WaterUniforms {
     uAirZenith: { value: new THREE.Color() },
     uAirHorizon: { value: new THREE.Color() },
     uSunDir: { value: new THREE.Vector3(10, 30, 5).normalize() },
+    uWaterBands: { value: 0 },
+    uToon: { value: 0 },
   };
 }
 
@@ -129,9 +145,12 @@ export function applyWater(mat: THREE.Material, ctx: RenderCtx): void {
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>${absorptionVertexPars}`)
       .replace("#include <project_vertex>", `#include <project_vertex>${absorptionVertex}`);
-    shader.fragmentShader = shader.fragmentShader
+    let fs = shader.fragmentShader
       .replace("#include <common>", `#include <common>${absorptionVertexPars}${absorptionPars}`)
       .replace("#include <tonemapping_fragment>", `${absorptionFragment}\n#include <tonemapping_fragment>`);
+    // lit materials get the stylised toon ramp (a uniform switch, so the style changes without recompiling)
+    if (fs.includes("#include <lights_fragment_end>")) fs = fs.replace("#include <opaque_fragment>", `${toonFragment}\n#include <opaque_fragment>`);
+    shader.fragmentShader = fs;
   };
   // The wrapper's source is the same for every material, so key on what it wraps.
   mat.customProgramCacheKey = () => baseKey + WATER_KEY;
@@ -188,6 +207,8 @@ export function buildWater(ctx: RenderCtx): { update(env: Environment, cameraY: 
       u.uWaterDensity.value = look.density;
       u.uWaterFloor.value = look.ambientFloor;
       u.uWaterLight.value = env.light;
+      u.uWaterBands.value = look.bands;
+      u.uToon.value = ctx.gfx.style === "stylised" ? 1 : 0;
       const t = dayness(env.light);
       u.uAirZenith.value.copy(AIR_ZENITH_NIGHT).lerp(AIR_ZENITH_DAY, t);
       u.uAirHorizon.value.copy(AIR_HORIZON_NIGHT).lerp(AIR_HORIZON_DAY, t);
@@ -199,6 +220,128 @@ export function buildWater(ctx: RenderCtx): { update(env: Environment, cameraY: 
     dispose() {
       ctx.scene.remove(m);
       if (ctx.scene.background === background) ctx.scene.background = null;
+      g.dispose();
+      mat.dispose();
+      noise.dispose();
+    },
+  };
+}
+
+/** Number of light-shaft quads: high only. */
+export function shaftCount(q: GfxQuality): number {
+  return q === "high" ? 24 : 0;
+}
+
+const SHAFT_BOX = 24; // shafts wrap in a box this wide around the camera
+const SHAFT_LEN = 9;
+
+const shaftVertex = /* glsl */ `
+attribute vec3 aShaft; // x, z offset in the wrap box; width
+attribute float aPhase;
+uniform vec3 uCam;
+uniform vec3 uAxis;     // unit, pointing down along the refracted sun ray
+uniform float uBox;
+uniform float uLen;
+varying vec2 vUv;
+varying float vPhase;
+varying float vDepth;
+varying float vDist;
+void main() {
+  // wrap each shaft into a box centred on the camera so they never run out
+  vec2 base = uCam.xz + mod(aShaft.xy - uCam.xz + 0.5 * uBox, uBox) - 0.5 * uBox;
+  vec3 top = vec3(base.x, -0.02, base.y);
+  vec3 along = uAxis * (position.y * uLen);       // position.y in 0..1
+  vec3 mid = top + uAxis * (0.5 * uLen);
+  vec3 side = normalize(cross(uAxis, normalize(uCam - mid))) * aShaft.z;
+  vec3 world = top + along + side * position.x;   // position.x in -0.5..0.5
+  vUv = vec2(position.x + 0.5, position.y);
+  vPhase = aPhase;
+  vDepth = -world.y;
+  vDist = distance(world, uCam);
+  gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+}`;
+
+const shaftFragment = /* glsl */ `
+uniform float uTime;
+uniform float uStrength;
+uniform float uWaterDensity;
+uniform vec3 uTint;
+uniform sampler2D uNoise;
+varying vec2 vUv;
+varying float vPhase;
+varying float vDepth;
+varying float vDist;
+void main() {
+  float edge = sin(vUv.x * 3.14159);
+  edge *= edge;
+  float flicker = texture2D(uNoise, vec2(vUv.x * 0.35 + vPhase, vUv.y * 0.12 - uTime * 0.025)).r;
+  flicker = 0.45 + 0.9 * flicker;
+  float fall = smoothstep(0.0, 0.08, vUv.y) * (1.0 - smoothstep(0.35, 1.0, vUv.y)) * exp(-vDepth * 0.28);
+  float near = smoothstep(0.8, 3.0, vDist);       // a shaft hugging the lens would fill the screen
+  float fog = exp(-vDist * uWaterDensity * 0.9);
+  float a = edge * flicker * fall * near * fog * uStrength;
+  gl_FragColor = vec4(uTint, a); // additive blending multiplies by alpha itself
+}`;
+
+/** Sunlight shafts hanging from the surface (additive, noise-scrolled, depth-faded). High quality only; empty on low. */
+export function buildShafts(ctx: RenderCtx): { update(env: Environment, cam: THREE.Vector3): void; dispose(): void } {
+  const n = shaftCount(ctx.gfx.quality);
+  if (n === 0) return { update() {}, dispose() {} };
+  const rng = ctx.rng(4242);
+  const quad = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0); // x -0.5..0.5, y 0..1
+  const g = new THREE.InstancedBufferGeometry();
+  g.index = quad.index;
+  g.setAttribute("position", quad.getAttribute("position"));
+  g.setAttribute("uv", quad.getAttribute("uv"));
+  const shaft = new Float32Array(n * 3);
+  const phase = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    shaft.set([(rng() - 0.5) * SHAFT_BOX, (rng() - 0.5) * SHAFT_BOX, 0.6 + rng() * 1.6], i * 3);
+    phase[i] = rng() * 10;
+  }
+  g.setAttribute("aShaft", new THREE.InstancedBufferAttribute(shaft, 3));
+  g.setAttribute("aPhase", new THREE.InstancedBufferAttribute(phase, 1));
+  g.instanceCount = n;
+  const noise = noiseTexture(ctx.rng(4343));
+  const axis = new THREE.Vector3();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uCam: { value: new THREE.Vector3() },
+      uAxis: { value: axis },
+      uBox: { value: SHAFT_BOX },
+      uLen: { value: SHAFT_LEN },
+      uTime: ctx.uTime,
+      uStrength: { value: 0 },
+      uWaterDensity: ctx.water.uWaterDensity,
+      uTint: { value: new THREE.Color(0.85, 0.95, 0.8) },
+      uNoise: { value: noise },
+    },
+    vertexShader: shaftVertex,
+    fragmentShader: shaftFragment,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(g, mat);
+  m.frustumCulled = false;
+  ctx.scene.add(m);
+  quad.dispose();
+  return {
+    update(env, cam) {
+      // Snell: the sun ray bends toward the vertical under water (n = 1.33)
+      const s = ctx.water.uSunDir.value;
+      const horiz = Math.hypot(s.x, s.z);
+      const sinT = Math.min(1, horiz) / 1.33;
+      const cosT = Math.sqrt(1 - sinT * sinT);
+      if (horiz > 1e-4) axis.set((-s.x / horiz) * sinT, -cosT, (-s.z / horiz) * sinT);
+      else axis.set(0, -1, 0);
+      mat.uniforms.uCam!.value.copy(cam);
+      const under = cam.y < 0 ? 1 : 0;
+      mat.uniforms.uStrength!.value = 0.45 * dayness(env.light) * under;
+    },
+    dispose() {
+      ctx.scene.remove(m);
       g.dispose();
       mat.dispose();
       noise.dispose();

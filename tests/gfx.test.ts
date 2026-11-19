@@ -8,6 +8,10 @@ import { SKINS, applyFishSkin, type FishSpecies } from "../src/render/fish";
 import { ANATOMY, DETAIL, FIN, buildFishModel, profile } from "../src/render/fishModel";
 import { World } from "../src/sim/world";
 import { defaultParams } from "../src/sim/params";
+import { burstsFromEvents, particleCounts } from "../src/render/particles";
+import type { SimEvent } from "../src/sim/simulation";
+import { gradeFor, pixelRatioFor } from "../src/render/post";
+import { shaftCount } from "../src/render/water";
 
 const memStorage = (init: Record<string, string> = {}): Storage => {
   const m = new Map(Object.entries(init));
@@ -273,5 +277,82 @@ describe("camera rig", () => {
     rig.zoom = 2;
     for (let i = 0; i < 120; i++) rig.update(pike, { yaw: 0, pitch: 0 }, world, 1 / 60);
     expect(cam.position.distanceTo(new THREE.Vector3(0, -2, 0))).toBeCloseTo(dist("chase") * 2, 1);
+  });
+});
+
+describe("life particles and strike bursts", () => {
+  // minimal sim stand-in: burstsFromEvents only reads pikes, prey and the lakebed height
+  const fakeSim = (pikeY: number) =>
+    ({
+      pikes: [{ id: 1, pos: { x: 0, y: pikeY, z: 0 }, yaw: 0, pitch: 0, lengthCm: 40 }],
+      prey: [{ id: 7, pos: { x: 2, y: -1, z: 3 } }],
+      world: { bottomY: () => -3 },
+    }) as unknown as Parameters<typeof burstsFromEvents>[2];
+  const strike = { type: "strike", pikeId: 1, lockId: null, t: 5 } as SimEvent;
+  const capture = { type: "capture", pikeId: 1, preyId: 7, kind: "roach", grams: 10, lengthCm: 10, t: 6 } as SimEvent;
+
+  it("maps a strike to bubbles at the mouth", () => {
+    const r = burstsFromEvents([strike], 0, fakeSim(-1));
+    expect(r.bursts.map((b) => b.kind)).toEqual(["bubbles"]);
+    expect(r.bursts[0]!.pos.x).toBeCloseTo(0.2); // half a body length ahead (yaw 0 faces +x)
+  });
+  it("adds silt only when the strike is near the bottom", () => {
+    const r = burstsFromEvents([strike], 0, fakeSim(-2.7));
+    expect(r.bursts.map((b) => b.kind).sort()).toEqual(["bubbles", "silt"]);
+    expect(r.bursts.find((b) => b.kind === "silt")!.pos.y).toBe(-3);
+  });
+  it("maps a capture to scales at the prey position", () => {
+    const r = burstsFromEvents([capture], 0, fakeSim(-1));
+    expect(r.bursts).toHaveLength(1);
+    expect(r.bursts[0]).toMatchObject({ kind: "scales", pos: { x: 2, y: -1, z: 3 }, t0: 6 });
+  });
+  it("advances next and ignores events before fromIndex", () => {
+    const r = burstsFromEvents([capture, strike], 1, fakeSim(-1));
+    expect(r.next).toBe(2);
+    expect(r.bursts.map((b) => b.kind)).toEqual(["bubbles"]);
+  });
+  it("restarts from the buffer start when the event buffer was trimmed", () => {
+    const r = burstsFromEvents([strike], 50, fakeSim(-1));
+    expect(r.next).toBe(1);
+    expect(r.bursts).toHaveLength(0); // events behind a trim are not replayed
+  });
+  it("low quality has half the particles of high", () => {
+    expect(particleCounts("high")).toEqual({ snow: 1800, glints: 250 });
+    expect(particleCounts("low")).toEqual({ snow: 900, glints: 120 });
+  });
+});
+
+describe("post chain and quality", () => {
+  it("high caps the pixel ratio at 2, low pins it at 1", () => {
+    expect(pixelRatioFor("high", 1)).toBe(1);
+    expect(pixelRatioFor("high", 1.5)).toBe(1.5);
+    expect(pixelRatioFor("high", 3)).toBe(2);
+    expect(pixelRatioFor("low", 3)).toBe(1);
+    expect(pixelRatioFor("low", 0.8)).toBe(0.8); // never upscale a sub-1 display
+  });
+  it("light shafts exist on high only", () => {
+    expect(shaftCount("high")).toBe(24);
+    expect(shaftCount("low")).toBe(0);
+  });
+});
+
+describe("stylised style", () => {
+  const env = { light: 0.8, season: "summer" as const, visibilityM: 4 };
+  const lum = (c: [number, number, number]): number => Math.round((0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) * 1000);
+  it("stylised absorption takes at most 4 flat depth bands", () => {
+    const look = waterLook(env, "stylised");
+    const seen = new Set<number>();
+    for (let d = 0; d <= 8; d += 0.05) seen.add(lum(absorptionColor(d, look, 8)));
+    expect(seen.size).toBeLessThanOrEqual(4);
+    expect(seen.size).toBeGreaterThan(1);
+  });
+  it("realistic absorption stays a smooth gradient", () => {
+    const look = waterLook(env, "realistic");
+    const seen = new Set<number>();
+    for (let d = 0; d <= 8; d += 0.05) seen.add(lum(absorptionColor(d, look, 8)));
+    expect(seen.size).toBeGreaterThan(20);
+  });
+  it("stylised grade is more saturated than realistic", () => {
+    expect(gradeFor("stylised").saturation).toBeGreaterThan(gradeFor("realistic").saturation);
   });
 });

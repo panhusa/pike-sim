@@ -3,7 +3,7 @@ import { clamp, dist, dot, forward, norm, Rng, sub, v3, type Vec3 } from "./math
 import { defaultParams, type Params, type PreyKind } from "./params";
 import { checkMilestones, type MilestoneId } from "./milestones";
 import { canStartBurst, condition, makePike, stepPike, lengthM, stomachRoom, tooFullFor, type PikeInput, type PikeState, type Sex, type DeathCause } from "./pike";
-import { homingInput, lungeCandidate } from "./lunge";
+import { homingInput, lungeCandidate, PLAYER_AIM_S, PLAYER_HOMING_MAX } from "./lunge";
 import { makeRivalMemory, pickHome, rivalInput } from "./rival";
 import { presetSettings, type SimSettings } from "./settings";
 import { spawnPrey, stepPrey, preySpeed, type PreyState } from "./prey";
@@ -132,7 +132,7 @@ export class Simulation {
     this.seed = opts.seed ?? 1;
     this.rng = new Rng(this.seed);
     this.settings = opts.settings ?? presetSettings("natural", "permadeath", this.p);
-    this.world = new World(this.p.world, this.seed * 7919, this.settings.map === "river" ? "river" : "lake");
+    this.world = new World(this.p.world, this.seed * 7919, this.settings.map === "river" ? "river" : "lake", this.settings.big === true);
     this.extras = new Extras(this.seed);
     this.startDay = opts.startDay ?? 120; // spring
     this.spawn = { year: Math.floor(this.startDay / this.p.environment.yearLengthDays), openDay: null, dwell: {} };
@@ -143,7 +143,8 @@ export class Simulation {
       this.applyState(restore);
       return;
     }
-    const scale = opts.preyScale ?? 1;
+    // game-size water: stock it at 75% of the small water's density, so it is not empty but the frame stays light
+    const scale = (opts.preyScale ?? 1) * (this.world.big ? this.world.areaMul * 0.75 : 1);
     for (const kind of Object.keys(this.p.prey) as PreyKind[]) {
       const spec = this.p.prey[kind];
       const [minS, maxS] = spec.schooling.size as [number, number];
@@ -305,7 +306,7 @@ export class Simulation {
   /** Params a pike lives by: the shared set, or the arcade-tuned copy for the player when arcade is on. */
   paramsFor(pk: PikeState): Params {
     if (!this.arcade || !this.isHuman(pk)) return this.p;
-    return (this.arcadeParams ??= arcadeParams(this.p));
+    return (this.arcadeParams ??= arcadeParams(this.p, this.settings.growthMul ?? 1));
   }
 
   isHuman(pk: PikeState): boolean {
@@ -373,8 +374,12 @@ export class Simulation {
       }
       if (pk.lockId !== null && (pk.burstTimeLeft > 0 || starting)) {
         const t = this.findLive(pk.lockId);
-        if (t) input = homingInput(pk, t.pos);
-        else pk.lockId = null;
+        if (!t) pk.lockId = null;
+        else if (this.arcade && this.isHuman(pk)) {
+          // the player's lunge aims briefly, then runs straight: no chasing a dodging fish round in circles
+          const elapsed = starting ? 0 : this.paramsFor(pk).pike.burstDurationS - pk.burstTimeLeft;
+          input = elapsed < PLAYER_AIM_S ? homingInput(pk, t.pos, PLAYER_HOMING_MAX) : { throttle: 0, yawRate: 0, pitchRate: 0, burst: true };
+        } else input = homingInput(pk, t.pos);
       }
       // out of the water (game leap): ballistic flight instead of swimming; burst timers still run down
       const flying = this.airborne.has(pk.id);
@@ -648,7 +653,7 @@ export class Simulation {
 }
 
 /** The shared params with params.arcade applied to the pike and strike blocks (multipliers, then fixed values). */
-export function arcadeParams(p: Params): Params {
+export function arcadeParams(p: Params, growthMul = 1): Params {
   const out = clone(p);
   const a = p.arcade;
   const apply = (dst: Record<string, unknown>, mul: Record<string, number>, set: Record<string, number>): void => {
@@ -666,6 +671,7 @@ export function arcadeParams(p: Params): Params {
   apply(out.pike as unknown as Record<string, unknown>, a.pikeMul, a.pikeSet);
   apply(out.strike as unknown as Record<string, unknown>, a.strikeMul, a.strikeSet);
   apply(out.metabolism as unknown as Record<string, unknown>, a.metabolismMul, {});
+  out.metabolism.growthEfficiency *= growthMul > 0 ? growthMul : 1; // the game's Growth option
   return out;
 }
 

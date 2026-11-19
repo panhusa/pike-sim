@@ -3,6 +3,8 @@ import type { RenderCtx } from "./ctx";
 
 const SKY_R = 380;
 const LAND_OUT = 300;
+/** Outer radius of the land ring: at least LAND_OUT, and 150 m past the water on the game-size river. */
+export const landOut = (half: number): number => Math.max(LAND_OUT, half + 150);
 
 /**
  * The world above the water, shown while the camera is in the air (a leap): sky dome with a sun, rolling
@@ -49,7 +51,7 @@ export function buildAbove(ctx: RenderCtx): { update(timeS: number, dt: number, 
   // ---- land: a ring from the bank outward, same rise as the terrain bank, then hills ----
   const rng = ctx.rng(4242);
   const landY = (x: number, z: number): number => w.bankY(x, z) - 0.03;
-  const landGeo = keep(new THREE.RingGeometry(half - 0.5, LAND_OUT, 96, 24));
+  const landGeo = keep(new THREE.RingGeometry(half - 0.5, landOut(half), 128, 24));
   landGeo.rotateX(-Math.PI / 2);
   const lp = landGeo.attributes.position!;
   const lc = new Float32Array(lp.count * 3);
@@ -71,8 +73,9 @@ export function buildAbove(ctx: RenderCtx): { update(timeS: number, dt: number, 
   air.add(new THREE.Mesh(landGeo, landMat));
 
   // ---- trees: instanced pines (three cones) and birches (trunk + crown) ----
-  const pineN = 220;
-  const birchN = 90;
+  const shoreK = w.size / (w.shape === "river" ? 144 : 90); // more shore on the game-size water, same tree density
+  const pineN = Math.round(220 * Math.max(1, shoreK));
+  const birchN = Math.round(90 * Math.max(1, shoreK));
   const trunkGeo = keep(new THREE.CylinderGeometry(0.12, 0.2, 1, 6));
   trunkGeo.translate(0, 0.5, 0);
   const pineTrunkMat = keep(new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: 0.9 }));

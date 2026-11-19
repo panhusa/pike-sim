@@ -196,8 +196,8 @@
   },
   "arcade": {
     "_doc": "Player-only tuning for the game (Simulation.arcade = true). Rivals, the coarse model and the calibration tests never use it.",
-    "pikeMul": { "maxSustainedBL": 2.5, "accelBL": 1.5, "turnRateRadS": 1.5, "burstTurnRateRadS": 1.3, "burstBL": 1.4, "burstDurationS": 1.3, "burstCostPerS": 0.6, "energyRecoveryPerS": 1.5, "lungeRangeBL": 1.8, "lungeMinRangeM": 1.8, "strikeRangeBL": 1.5, "stomachMaxFracOfWeight": 2, "digestionHalfLifeH.ref": 0.0625 },
-    "pikeSet": { "burstCooldownS": 1.0, "lungeConeRad": 0.9 },
+    "pikeMul": { "maxSustainedBL": 2.5, "accelBL": 1.5, "turnRateRadS": 1.25, "burstTurnRateRadS": 1.3, "burstBL": 1.4, "burstDurationS": 1.3, "burstCostPerS": 0.6, "energyRecoveryPerS": 1.5, "lungeRangeBL": 1.8, "lungeMinRangeM": 1.8, "strikeRangeBL": 1.5, "stomachMaxFracOfWeight": 2, "digestionHalfLifeH.ref": 0.0625 },
+    "pikeSet": { "burstCooldownS": 1.0, "lungeConeRad": 0.5 },
     "metabolismMul": { "growthEfficiency": 4 },
     "strikeMul": { "escapeSpeedWeight": 0.6, "escapeAlertWeight": 0.5 },
     "strikeSet": { "oddsMin": 0.3, "oddsMax": 0.97, "alignMin": 0.4 },

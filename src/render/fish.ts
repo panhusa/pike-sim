@@ -3,6 +3,7 @@ import type { PikeState } from "../sim/pike";
 import { len } from "../sim/math";
 import type { PreyKind } from "../sim/params";
 import type { RenderCtx } from "./ctx";
+import { OUTLINE_FRAC, OUTLINE_LAYER, outlineMaterial } from "./outline";
 import { applyWater } from "./water";
 import { addTailWag } from "./fishGeometry";
 import { buildFishModel, DETAIL } from "./fishModel";
@@ -89,6 +90,10 @@ export function buildFish(ctx: RenderCtx): { update(player: PikeState, hidePlaye
   const fishMats: THREE.MeshStandardMaterial[] = [];
   const preyDetail = ctx.gfx.quality === "low" ? DETAIL.low : DETAIL.high;
   const pikeGeo = { hero: buildFishModel("pike", DETAIL.hero), rival: buildFishModel("pike", DETAIL.high) };
+  // stylised outlines (camera layer OUTLINE_LAYER); fish geometry is unit length, so thickness is a body-length share
+  const pikeOutline = outlineMaterial(ctx, OUTLINE_FRAC, { uniforms: pikeUniforms, instanced: false });
+  const preyOutline = outlineMaterial(ctx, OUTLINE_FRAC, { uniforms: preyUniforms, instanced: true });
+  const preyOutlines = new Map<PreyKind, THREE.InstancedMesh>();
 
   for (const kind of PREY_KINDS) {
     const g = buildFishModel(kind, preyDetail);
@@ -105,6 +110,13 @@ export function buildFish(ctx: RenderCtx): { update(player: PikeState, hidePlaye
     mesh.count = 0;
     preyMeshes.set(kind, mesh);
     ctx.scene.add(mesh);
+    const hull = new THREE.InstancedMesh(g, preyOutline, MAX_PREY);
+    hull.instanceMatrix = mesh.instanceMatrix; // same placements as the fish
+    hull.frustumCulled = false;
+    hull.count = 0;
+    hull.layers.set(OUTLINE_LAYER);
+    preyOutlines.set(kind, hull);
+    ctx.scene.add(hull);
   }
 
   /** isPlayer: the local player (hero detail); human: any player's pike (player colouring, not the darker rival tint). */
@@ -119,6 +131,10 @@ export function buildFish(ctx: RenderCtx): { update(player: PikeState, hidePlaye
       m = new THREE.Mesh(isPlayer ? pikeGeo.hero : pikeGeo.rival, mat);
       m.rotation.order = "YZX";
       m.frustumCulled = false;
+      const hull = new THREE.Mesh(m.geometry, pikeOutline);
+      hull.layers.set(OUTLINE_LAYER);
+      hull.frustumCulled = false;
+      m.add(hull);
       pikeMeshes.set(pk.id, m);
       ctx.scene.add(m);
     }
@@ -162,6 +178,7 @@ export function buildFish(ctx: RenderCtx): { update(player: PikeState, hidePlaye
       for (const [kind, mesh] of preyMeshes) {
         mesh.count = counts.get(kind) ?? 0;
         mesh.instanceMatrix.needsUpdate = true;
+        preyOutlines.get(kind)!.count = mesh.count;
       }
     },
     dispose() {
@@ -172,6 +189,9 @@ export function buildFish(ctx: RenderCtx): { update(player: PikeState, hidePlaye
       pikeGeo.hero.dispose();
       pikeGeo.rival.dispose();
       envMap.dispose();
+      pikeOutline.dispose();
+      preyOutline.dispose();
+      for (const m of preyOutlines.values()) ctx.scene.remove(m); // geometry and matrix belong to the fish meshes
       for (const m of preyMeshes.values()) {
         ctx.scene.remove(m);
         m.geometry.dispose();

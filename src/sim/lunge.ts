@@ -75,8 +75,16 @@ export function lungeCandidate(sim: Simulation, pk: PikeState): LungeTarget | nu
 
 const HOMING_GAIN = 4;
 
+/**
+ * Game only: a human's lunge aims for this long at the start of the burst, then runs straight, so a
+ * dodging fish does not drag the player's heading around (playtest: "it turns rapidly after a miss").
+ */
+export const PLAYER_AIM_S = 0.25;
+/** Game only: cap on the human's homing turn command (fraction of the burst turn rate). */
+export const PLAYER_HOMING_MAX = 0.6;
+
 /** Committed-lunge steering: turn toward the target, no throttle, burst held. */
-export function homingInput(pk: PikeState, target: Vec3): PikeInput {
+export function homingInput(pk: PikeState, target: Vec3, maxRate = 1): PikeInput {
   const dx = target.x - pk.pos.x;
   const dy = target.y - pk.pos.y;
   const dz = target.z - pk.pos.z;
@@ -84,8 +92,8 @@ export function homingInput(pk: PikeState, target: Vec3): PikeInput {
   const pitchErr = Math.atan2(dy, Math.hypot(dx, dz)) - pk.pitch;
   return {
     throttle: 0,
-    yawRate: clamp(yawErr * HOMING_GAIN, -1, 1),
-    pitchRate: clamp(pitchErr * HOMING_GAIN, -1, 1),
+    yawRate: clamp(yawErr * HOMING_GAIN, -maxRate, maxRate),
+    pitchRate: clamp(pitchErr * HOMING_GAIN, -maxRate, maxRate),
     burst: true,
   };
 }

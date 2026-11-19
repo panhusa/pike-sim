@@ -13,6 +13,7 @@ are generated in code. There are no image or model files.
 - A minimap (N) shows food, bigger and smaller pike, players and the boat. **H** (or the ? button) lists every control.
 - Pick the **water** when you start: the **lake** (still, reed beds, a deep middle) or the **river**
   (a current that carries you downstream, deep slow pools and wide fast riffles; fish hold against the flow).
+- Pick the **growth** speed: Normal, Fast (x3) or Very fast (x8). When hosting, your choice applies to everyone.
 - Fish near you get a ring. **Green** = in reach, strike now. **Amber** = edible, get closer. **Grey** = too big.
 - Quick catches build a combo (up to x5). Goals at the top pay bonuses; growing unlocks new stages.
 - Every few minutes a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.
@@ -25,7 +26,8 @@ are generated in code. There are no image or model files.
   you go only if you have hearts to spare.
 
 **Desktop:** mouse steer · `W` swim · `Shift`+`W` stalk · `Space`/click strike · `R` rest (still, in cover) ·
-`C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu. "Invert mouse" (start screen or menu) makes pushing the mouse forward dive.
+`C` camera · wheel zoom · `Q`/`E` orbit · `V` reset view · `M` sound · `Esc` menu. "Invert mouse" (start screen or menu) makes pushing the mouse forward dive;
+"Mouse sensitivity" sets how far the pike turns per mouse movement. A strike aims at the fish for a split second, then shoots straight.
 
 **Phone:** joystick to steer and swim (push further to go faster) · Strike · Rest · Cam · Pause.
 Tilt steering can be chosen on the start screen.
@@ -35,6 +37,20 @@ One player picks lake or river, clicks **Host** and reads out the 5-letter code;
 Browsers connect directly (WebRTC); the public [PeerJS](https://peerjs.com) broker only introduces them,
 and no game data goes through any server. The host's browser runs the lake, so keep that tab open.
 Strict corporate or some mobile networks can block direct connections.
+
+## Graphics
+Everything you see is procedural: fish bodies, scales, plants, lakebed, sky and sounds are generated in code, with no
+downloaded models or textures.
+
+- **Style:** Realistic (murky sunlit water, caustics, Snell's window, light shafts) or Stylised (flat depth bands,
+  toon lighting, outlined fish and logs, a more saturated palette). Pick it on the start screen or in the pause menu;
+  it applies at once.
+- **Quality:** High adds bloom, light shafts, the colour-grade pass, 4x MSAA, denser plants and more particles. Low
+  draws straight to the screen at pixel ratio 1. Touch devices start on Low. On High, if the first 3 s of play
+  average under 40 fps and you never picked a quality, the game drops to Low by itself. Resolution also drops step by
+  step on devices that stay slow.
+- **Debug HUD:** add `?debug=1` to the URL to see fps, draw calls and the current quality next to the clock
+  (and press `T` to fast-forward time).
 
 ## Development
 TypeScript + Three.js + Vite. The simulation (`src/sim`) is headless and separate from rendering
@@ -50,3 +66,6 @@ npm run build
 Biology runs on a calendar clock (1 game day = 600 s) while swimming is real-time; calibration tests pin
 growth to published pike ranges. The game layer gives the player arcade tuning (`params.arcade`);
 rivals and the calibration keep the realistic model.
+
+## License
+MIT, see [LICENSE](LICENSE). All art (models, textures, sounds) is procedural and covered by the same licence.

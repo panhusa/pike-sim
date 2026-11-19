@@ -1,5 +1,5 @@
-"""Browser check for Pike. Start the dev server first: npx vite --port 5199
-Run: ~/.playwright-venv/bin/python3 scripts/browser-check.py"""
+"""Browser check for Pike. Start a server first: npx vite --port 5199 (or npx vite build && npx vite preview --port 5199)
+Run: ~/.playwright-venv/bin/python3 scripts/browser-check.py   (PIKE_URL / PIKE_SHOTS override the server and shot dir)"""
 import os
 import sys
 from playwright.sync_api import sync_playwright
@@ -25,11 +25,11 @@ def start_new_life(page):
 
 with sync_playwright() as pw:
     browser = pw.chromium.launch(args=ARGS)
-    ctx = browser.new_context(viewport={"width": 1280, "height": 720})
+    ctx = browser.new_context(viewport={"width": 800, "height": 450})  # High (bloom, MSAA) is too slow in SwiftShader at 720p
     page = ctx.new_page()
     page.set_default_timeout(180000)  # SwiftShader frames take 0.1-2 s on a loaded host; screenshots wait for a frame
     errors = []
-    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" or (m.type == "warning" and ("WebGL" in m.text or "THREE" in m.text) and "GPU stall" not in m.text) else None)
     page.on("pageerror", lambda e: errors.append(str(e)))
 
     # 1. new life
@@ -176,14 +176,18 @@ with sync_playwright() as pw:
         const by = {}; for (const t of geos.values()) by[t] = (by[t] || 0) + 1;
         return {label, g: v.renderer.info.memory.geometries, t: v.renderer.info.memory.textures, scene: geos.size, by};
       };
-      const g0 = {...v.gfx}, out = [m('a')];
+      // the fps probe may already have dropped SwiftShader to Low: start from an explicit High so 'a' is High
+      const g0 = {...v.gfx, quality: 'high', qualityChosen: true};
+      v.setGfx(g0);
+      const out = [m('a')];
       for (const q of ['low', 'high', 'low', 'high']) { v.setGfx({...g0, quality: q}); out.push(m(q)); }
       return out;
     }""")
     key = lambda r: (r["g"], r["t"], r["scene"])
-    # out = [a(high), b(low), c(high), d(low), e(high)]: first rebuild a==c, and the next cycle b==d, c==e; textures never grow
-    ok = key(mem[0]) == key(mem[2]) and key(mem[1]) == key(mem[3]) and key(mem[2]) == key(mem[4]) and mem[0]["t"] == mem[4]["t"]
-    check("3g quality switch keeps geometry/texture counts (a==c, b==d, c==e)", ok, str([(r["label"], r["g"], r["t"], r["scene"]) for r in mem]))
+    # out = [a(high), b(low), c(high), d(low), e(high)]
+    # uploads are lazy, so a count can dip by one when a frame skips an object; a leak shows as growth, so check for none
+    ok = all(mem[i + 2]["g"] <= mem[i]["g"] and mem[i + 2]["t"] <= mem[i]["t"] and mem[i + 2]["scene"] == mem[i]["scene"] for i in range(3))
+    check("3g quality switch never grows geometry/texture counts", ok, str([(r["label"], r["g"], r["t"], r["scene"]) for r in mem]))
     # 3h look up from under a lily pad cluster (pads should read against the Snell window)
     pad = page.evaluate("""() => {
       const s = __pike.sim, pl = s.player(), w = s.world, sp = __pike.view.padSpots;
@@ -198,6 +202,23 @@ with sync_playwright() as pw:
     page.wait_for_timeout(5000)
     page.screenshot(path=SHOTS + "pike-lilypads-up.png")
     page.evaluate("""() => { const pl = __pike.sim.player(); pl.pos.x = 0; pl.pos.z = 0; pl.pos.y = -2.5; pl.yaw = 0; }""")
+
+    # 3i graphics set: style x quality x time of day, same spot and prey (post chain, shafts, stylised bands/outlines)
+    gfx = lambda st, q: page.evaluate(f"__pike.view.setGfx({{style:'{st}', quality:'{q}', qualityChosen:true}})")
+    prey_row = "[[2.0, 0.3, 0.1], [2.6, -0.5, 0.25], [3.2, 0.1, -0.1]]"
+    for name, st, q, hour in [("realistic-high-noon", "realistic", "high", 12), ("realistic-high-dusk", "realistic", "high", 19.5),
+                              ("realistic-low-noon", "realistic", "low", 12), ("stylised-noon", "stylised", "high", 12),
+                              ("realistic-high-night", "realistic", "high", 0.5)]:
+        gfx(st, q)
+        page.evaluate(f"__shot({hour}, {prey_row}, 0.45)")
+        page.wait_for_timeout(5000)
+        page.screenshot(path=SHOTS + f"pike-gfx-{name}.png")
+    page.evaluate("__shot(12, [[0.6, -0.1, 0, 'perch'], [0.8, 0.2, 0.04, 'perch']], 0)")
+    page.wait_for_timeout(5000)
+    page.screenshot(path=SHOTS + "pike-gfx-perch-close.png")
+    calls = page.evaluate("__pike.view.drawCalls")
+    check("3i draw calls on High under 150", calls < 150, f"calls={calls}")
+    gfx("realistic", "high")
     page.evaluate("__shotOff()")
     check("3d no console errors after water shots", not errors, "; ".join(errors[:3]))
 

@@ -25,6 +25,7 @@
   .mark.strike { color:#6fe3a0; border-color:#6fe3a0; }
   .mark.edible { color:#f2b84b; border-color:#f2b84b; }
   .mark.big { color:#9aa3a0; border-color:#9aa3a0; }
+  .mark.full { color:#9aa3a0; border-color:#9aa3a0; border-style:dashed; opacity:0.75; }
   #hint { position:fixed; left:50%; bottom:150px; transform:translateX(-50%); max-width:min(480px, calc(100vw - 32px)); text-align:center; color:var(--fg); text-shadow:0 1px 3px #000; pointer-events:none; }
   #rest { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); color:var(--fg); text-shadow:0 1px 3px #000; pointer-events:none; }
   .touch-layer { position:fixed; inset:0; touch-action:none; pointer-events:none; user-select:none; -webkit-user-select:none; }
@@ -61,6 +62,7 @@
   #overlay kbd { background:#12302c; padding:1px 6px; border-radius:4px; color:var(--fg); }
   #overlay .card { background:#0d2724; border-radius:8px; padding:12px 16px; margin:12px 0; }
   #overlay label { display:block; margin:8px 0; color:var(--dim); }
+  #overlay .gfxRow label { display:inline-block; margin-right:14px; }
   #overlay select, #overlay input { font:inherit; background:#12302c; color:var(--fg); border:1px solid var(--bar); border-radius:4px; padding:3px 6px; }
   #overlay input[type=range] { padding:0; vertical-align:middle; }
   #overlay button { margin:14px 8px 0 0; padding:9px 18px; font:inherit; background:var(--acc); color:#06201a; border:0; border-radius:6px; cursor:pointer; }

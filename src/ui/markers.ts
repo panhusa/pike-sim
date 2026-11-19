@@ -1,7 +1,7 @@
 import type { LungeTarget } from "../sim/lunge";
 import type { Vec3 } from "../sim/math";
 
-export type MarkTone = "strike" | "edible" | "big"; // green / amber / grey
+export type MarkTone = "strike" | "edible" | "big" | "full"; // green / amber / grey / grey dashed (no stomach room)
 export interface Mark {
   id: number;
   x: number;
@@ -13,18 +13,21 @@ export interface Mark {
 /**
  * Rings for the sensed targets (best first), at most `max`. The strike candidate (the first target
  * that can be lunged at, as lungeCandidate picks it) always gets a ring and the big primary one;
- * without a candidate the best visible target is primary.
+ * without a candidate the best visible target is primary. `opts.tooFull` marks edible targets the pike has no
+ * stomach room for as "full": never green, so the rings, the hint and the Strike glow do not promise a catch.
  */
 export function computeMarks(
   targets: LungeTarget[],
   project: (p: Vec3) => { x: number; y: number; visible: boolean },
   max: number,
+  opts?: { tooFull?: (t: LungeTarget) => boolean },
 ): Mark[] {
   const visible: Mark[] = [];
   for (const t of targets) {
     const s = project(t.pos);
     if (!s.visible) continue;
-    const tone: MarkTone = t.edible && t.inRange && t.inCone ? "strike" : t.edible ? "edible" : "big";
+    const full = t.edible && !!opts?.tooFull?.(t);
+    const tone: MarkTone = full ? "full" : t.edible && t.inRange && t.inCone ? "strike" : t.edible ? "edible" : "big";
     visible.push({ id: t.id, x: s.x, y: s.y, tone, primary: false });
   }
   const primary = visible.find((m) => m.tone === "strike") ?? visible[0];

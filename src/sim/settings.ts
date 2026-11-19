@@ -14,6 +14,10 @@ export interface SimSettings {
   map?: MapShape;
   /** game only: nothing can kill a human player (no bites, no starving, the angler always lets you go) */
   chill?: boolean;
+  /** game only: the bigger, denser game-size water (lake x1.8 across, river x2.4 longer, 2x plant beds). Old saves and tests: off */
+  big?: boolean;
+  /** game only: multiplier on the human players' growth efficiency (1 = normal) */
+  growthMul?: number;
 }
 
 export function presetSettings(preset: DangerPreset, deathMode: DeathMode, p: Params): SimSettings {

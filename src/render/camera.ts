@@ -35,7 +35,7 @@ interface ModeSpec {
 }
 
 const SPECS: Record<Exclude<CameraMode, "eye">, ModeSpec> = {
-  chase: { distBL: 3.2, minM: 0.6, elev: 0.22, angle: 0.6, yawFollow: 2.5, posFollow: 7, lead: 1.2, freeLook: true },
+  chase: { distBL: 3.2, minM: 0.6, elev: 0.22, angle: 0.2, yawFollow: 2.5, posFollow: 7, lead: 1.2, freeLook: true },
   close: { distBL: 1.5, minM: 0.3, elev: 0.1, angle: 0.5, yawFollow: 4, posFollow: 12, lead: 0.4, freeLook: true },
   wide: { distBL: 6, minM: 1.5, elev: 0.5, angle: 0.15, yawFollow: 1.2, posFollow: 4, lead: 2, freeLook: false },
   side: { distBL: 2.6, minM: 0.5, elev: 0.08, angle: Math.PI / 2, yawFollow: 1.5, posFollow: 4, lead: 0.2, freeLook: false },

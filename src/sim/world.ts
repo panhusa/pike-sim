@@ -33,11 +33,25 @@ const RIVER = {
   maxSpeed: 0.9,
 };
 
+/** Game-size water (settings.big): what the game plays on; the biology tests keep the small default. */
+export const BIG = {
+  lakeMul: 1.8,
+  riverLenMul: 2.4,
+  /** plant beds per square metre, relative to the small water */
+  plantDensity: 2,
+  /** blades/fronds per bed, relative to the small water (renderer) */
+  bladesPerBed: 1.5,
+};
+
 export class World {
   /** side of the square that holds all the water (render and spawn bounds) */
   readonly size: number;
   readonly maxDepth: number;
   readonly shape: MapShape;
+  /** game-size water (see BIG) */
+  readonly big: boolean;
+  /** water area relative to the small default of the same shape */
+  readonly areaMul: number;
   readonly reeds: Reed[] = [];
   readonly weeds: Weed[] = [];
   readonly logs: Log[] = [];
@@ -46,30 +60,34 @@ export class World {
   /** hill phases for the land around the water (from the seed, without touching the world RNG) */
   private readonly hillPh: number[];
 
-  constructor(p: Params["world"], seed: number, shape: MapShape = "lake") {
+  constructor(p: Params["world"], seed: number, shape: MapShape = "lake", big = false) {
     this.shape = shape;
+    this.big = big;
+    this.areaMul = big ? (shape === "river" ? BIG.riverLenMul : BIG.lakeMul * BIG.lakeMul) : 1;
+    const beds = big ? this.areaMul * BIG.plantDensity : 1; // plant-bed count multiplier
+    const logsK = this.areaMul;
     this.maxDepth = p.maxDepth;
     this.hillPh = [1, 2, 3].map((k) => ((Math.abs(Math.sin(seed * 12.9898 + k * 78.233)) * 43758.5453) % 1) * 6.28);
     if (shape === "river") {
-      this.size = p.size * RIVER.sizeMul;
-      this.buildRiver(seed);
+      this.size = p.size * RIVER.sizeMul * (big ? BIG.riverLenMul : 1);
+      this.buildRiver(seed, beds, logsK);
       return;
     }
-    this.size = p.size;
+    this.size = p.size * (big ? BIG.lakeMul : 1);
     const rng = new Rng(seed);
     const half = this.size / 2;
     // Reed belt on the shallow rim, weed beds on the shelf, a few sunken logs.
-    for (let i = 0; i < 140; i++) {
+    for (let i = 0; i < Math.round(140 * beds); i++) {
       const a = rng.range(0, Math.PI * 2);
       const r = half * rng.range(0.72, 0.93);
       this.reeds.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, radius: rng.range(1.2, 3.2), height: rng.range(0.8, 1.8) });
     }
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < Math.round(90 * beds); i++) {
       const a = rng.range(0, Math.PI * 2);
       const r = half * rng.range(0.35, 0.8);
       this.weeds.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, radius: rng.range(1.5, 4), height: rng.range(0.6, 1.8) });
     }
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < Math.round(6 * logsK); i++) {
       const a = rng.range(0, Math.PI * 2);
       const r = half * rng.range(0.45, 0.8);
       const x = Math.cos(a) * r;
@@ -111,7 +129,7 @@ export class World {
     return (z - this.centreZ(x)) / Math.sqrt(1 + s * s);
   }
 
-  private buildRiver(seed: number): void {
+  private buildRiver(seed: number, beds: number, logsK: number): void {
     const rng = new Rng(seed);
     this.ph = [rng.range(0, 6.28), rng.range(0, 6.28), rng.range(0, 6.28), rng.range(0, 6.28)];
     const L = this.riverHalfLen;
@@ -123,21 +141,21 @@ export class World {
       return [x - s * n * off, this.centreZ(x) + n * off];
     };
     // reeds fringe both banks, thicker on slow pool margins
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < Math.round(150 * beds); i++) {
       const x = rng.range(-L + 2, L - 2);
       const [rx, rz] = at(x, (rng.next() < 0.5 ? -1 : 1) * rng.range(0.7, 0.95));
       if (rng.next() > 0.35 + 0.65 * this.poolness(x)) continue;
       this.reeds.push({ x: rx, z: rz, radius: rng.range(1.0, 2.6), height: rng.range(0.6, 1.4) });
     }
     // weed beds in the pools' slack water
-    for (let i = 0; i < 120 && this.weeds.length < 70; i++) {
+    for (let i = 0, cap = Math.round(70 * beds); i < Math.round(120 * beds) && this.weeds.length < cap; i++) {
       const x = rng.range(-L + 3, L - 3);
       if (this.poolness(x) < 0.45) continue;
       const [wx, wz] = at(x, rng.range(-0.7, 0.7));
       this.weeds.push({ x: wx, z: wz, radius: rng.range(1.4, 3.4), height: rng.range(0.6, 1.6) });
     }
     // snags: fallen trees lodged along the banks
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < Math.round(9 * logsK); i++) {
       const x = rng.range(-L + 6, L - 6);
       const [lx, lz] = at(x, (rng.next() < 0.5 ? -1 : 1) * rng.range(0.3, 0.65));
       this.logs.push({ x: lx, z: lz, y: -this.depthAt(lx, lz) + 0.3, yaw: rng.range(0, Math.PI), length: rng.range(3, 6), radius: rng.range(0.2, 0.35) });

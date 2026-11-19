@@ -19,10 +19,13 @@ uniform vec3 uWaterDeep;
 uniform float uWaterDensity;
 uniform float uWaterFloor;
 uniform float uWaterMaxDepth;
+uniform float uWaterBands;
+uniform float uToon;
 
 // Water colour at a depth: shallow -> deep, smoothstep over the lake's max depth.
 vec3 waterTint(float depthM) {
   float t = clamp(depthM / uWaterMaxDepth, 0.0, 1.0);
+  if (uWaterBands > 1.0) t = min(floor(t * uWaterBands), uWaterBands - 1.0) / (uWaterBands - 1.0);
   return mix(uWaterShallow, uWaterDeep, t * t * (3.0 - 2.0 * t));
 }
 

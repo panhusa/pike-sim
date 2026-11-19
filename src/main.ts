@@ -1,18 +1,18 @@
-import { initialGfx, loadGfx } from "./render/gfxSettings";
+import { autoQuality, initialGfx, loadGfx, saveGfx, type GfxSettings } from "./render/gfxSettings";
 import { PikeScene } from "./render/scene";
 import { CAMERA_LABEL, CAMERA_MODES, type CameraMode } from "./render/camera";
 import { defaultParams } from "./sim/params";
 import { angleDiff, clamp } from "./sim/math";
 import { continueAsOffspring, lifeSummary, offspringOptions } from "./sim/lifecycle";
 import { MILESTONE_TEXT } from "./sim/milestones";
-import { condition, hunger, type PikeInput, type PikeState } from "./sim/pike";
+import { condition, hunger, tooFullFor, type PikeInput, type PikeState } from "./sim/pike";
 import { restBlockers, restFor, type RestBlocker } from "./sim/rest";
 import { parseSave, toSaveFile } from "./sim/save";
 import { Minimap } from "./ui/minimap";
 import { presetSettings, type SimSettings } from "./sim/settings";
 import type { MapShape } from "./sim/world";
 import { placePlayerNearPrey, Simulation, type MissReason, type SimEvent } from "./sim/simulation";
-import { lungeTargets } from "./sim/lunge";
+import { lungeTargets, type LungeTarget } from "./sim/lunge";
 import { AdaptiveResolution, stepPlan } from "./ui/frameBudget";
 import { GameSession } from "./ui/gameSession";
 import { nextHint, HINT_TEXT, TOUCH_HINT_TEXT } from "./ui/hints";
@@ -65,7 +65,25 @@ addEventListener(
   },
   { passive: true },
 );
-const gfx = initialGfx(loadGfx(browserStorage()), window.matchMedia?.("(pointer: coarse)").matches ?? false);
+const storedGfx = loadGfx(browserStorage());
+let gfx = initialGfx(storedGfx, window.matchMedia?.("(pointer: coarse)").matches ?? false);
+/** Apply and remember a graphics change. An automatic quality (touch default, fps drop) is never saved as a choice. */
+function changeGfx(next: GfxSettings): void {
+  gfx = next;
+  saveGfx(browserStorage(), next.qualityChosen ? next : { ...next, quality: storedGfx.quality });
+  view?.setGfx(next);
+  if (view) adaptiveRes = new AdaptiveResolution(view.renderer.getPixelRatio());
+}
+const gfxPref = {
+  get style() {
+    return gfx.style;
+  },
+  get quality() {
+    return gfx.quality;
+  },
+  onStyle: (style: GfxSettings["style"]) => changeGfx({ ...gfx, style }),
+  onQuality: (quality: GfxSettings["quality"]) => changeGfx({ ...gfx, quality, qualityChosen: true }),
+};
 const game = new GameSession(canvas);
 addEventListener("pointerdown", () => game.audio.unlock());
 addEventListener("touchstart", () => game.audio.unlock(), { passive: true });
@@ -108,9 +126,35 @@ let invertMouse = (() => {
     return false;
   }
 })();
+/** Mouse sensitivity, relative to the original 0.0025 rad/px (playtest: too twitchy, so the default is lower). */
+const SENS_KEY = "pike.mouseSens.v1";
+const MOUSE_RAD_PER_PX = 0.0025;
+let mouseSens = (() => {
+  try {
+    const v = Number(localStorage.getItem(SENS_KEY));
+    return v >= 0.2 && v <= 2 ? v : 0.6;
+  } catch {
+    return 0.6;
+  }
+})();
+/** How far the wanted heading may run ahead of the body (rad): a big flick no longer queues a long spin. */
+const MAX_LEAD = 0.8;
+/** Turn command per radian of heading error (was 3: snappy but jerky). */
+const STEER_GAIN = 2.2;
 const mousePref = {
   get invertY() {
     return invertMouse;
+  },
+  get sens() {
+    return mouseSens;
+  },
+  onSens(v: number) {
+    mouseSens = v;
+    try {
+      localStorage.setItem(SENS_KEY, String(v));
+    } catch {
+      /* storage blocked: applies for this visit only */
+    }
   },
   onChange(v: boolean) {
     invertMouse = v;
@@ -166,8 +210,11 @@ canvas.addEventListener("mousedown", () => {
 });
 addEventListener("mousemove", (e) => {
   if (mode !== "playing" || document.pointerLockElement !== canvas) return;
-  wantYaw += e.movementX * 0.0025;
-  wantPitch = clamp(wantPitch - e.movementY * 0.0025 * (invertMouse ? -1 : 1), -0.9, 0.9);
+  const k = MOUSE_RAD_PER_PX * mouseSens;
+  const pl = sim?.player();
+  wantYaw += e.movementX * k;
+  if (pl) wantYaw = pl.yaw + clamp(angleDiff(wantYaw, pl.yaw), -MAX_LEAD, MAX_LEAD);
+  wantPitch = clamp(wantPitch - e.movementY * k * (invertMouse ? -1 : 1), -0.9, 0.9);
 });
 canvas.addEventListener("click", () => {
   if (mode === "playing" && !touchOn && document.pointerLockElement !== canvas) lockPointer();
@@ -227,7 +274,8 @@ function playerInput(pl: PikeState): PikeInput {
     wantPitch = clamp(pl.pitch, -0.9, 0.9);
   }
   const throttle = kbThrottle;
-  return { throttle, yawRate: clamp(angleDiff(wantYaw, pl.yaw) * 3, -1, 1), pitchRate: clamp((wantPitch - pl.pitch) * 3, -1, 1), burst };
+  wantYaw = pl.yaw + clamp(angleDiff(wantYaw, pl.yaw), -MAX_LEAD, MAX_LEAD);
+  return { throttle, yawRate: clamp(angleDiff(wantYaw, pl.yaw) * STEER_GAIN, -1, 1), pitchRate: clamp((wantPitch - pl.pitch) * STEER_GAIN, -1, 1), burst };
 }
 
 // --- HUD ---
@@ -288,7 +336,9 @@ function updateHud(s: Simulation, pl: PikeState, restText: string): void {
   $("spd").textContent = `${(pl.speed / (pl.lengthCm / 100)).toFixed(1)} BL/s`;
   const hh = Math.floor(s.env.dayFraction * 24);
   const mm = Math.floor((s.env.dayFraction * 24 - hh) * 60);
-  const dbg = debug ? `  ·  ×${TIME_SCALES[timeScaleIdx]}  ·  step ${stepMs.toFixed(2)} ms` : "";
+  const dbg = debug
+    ? `  ·  ×${TIME_SCALES[timeScaleIdx]}  ·  step ${stepMs.toFixed(2)} ms  ·  ${fpsShown.toFixed(0)} fps  ·  ${view?.drawCalls ?? 0} calls  ·  ${gfx.quality}`
+    : "";
   $("clock").textContent = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}${dbg}`;
   $("env").textContent = `${SEASONS[s.env.season]} · day ${s.env.dayOfYear} · ${s.env.tempC.toFixed(1)} °C · vis ${s.env.visibilityM.toFixed(1)} m`;
   $("rest").textContent = restText;
@@ -312,7 +362,7 @@ addEventListener("pagehide", () => autosave());
 function settingsFrom(c: NewLifeConfig): SimSettings {
   const base = presetSettings(c.preset === "custom" ? "natural" : c.preset, c.deathMode, defaultParams);
   const s = c.preset === "custom" ? { ...base, rivalCount: c.rivalCount, rivalSizeScale: c.rivalSizeScale, aggression: c.aggression } : base;
-  return { ...s, map: c.map, chill: c.chill };
+  return { ...s, map: c.map, chill: c.chill, big: true, growthMul: c.growthMul };
 }
 
 function warnSaveFailed(): void {
@@ -329,6 +379,7 @@ function enter(next: Simulation): void {
   view.rig.setMode(loadCameraMode());
   showCameraLabel();
   adaptiveRes = new AdaptiveResolution(view.renderer.getPixelRatio());
+  fpsProbe = { acc: 0, frames: 0, done: false };
   const pl = sim.player()!;
   mountTouch(pendingPermission);
   pendingPermission = undefined;
@@ -358,7 +409,7 @@ function newLife(settings: SimSettings, seed: number): void {
 }
 
 // --- multiplayer flow ---
-async function hostGame(name: string, map: MapShape = "lake", chill = true): Promise<void> {
+async function hostGame(name: string, map: MapShape = "lake", chill = true, growthMul = 1): Promise<void> {
   saveName(name);
   let code = makeRoomCode();
   let t;
@@ -370,7 +421,7 @@ async function hostGame(name: string, map: MapShape = "lake", chill = true): Pro
       throw new Error(`Could not open a lake (${e instanceof Error ? e.message : "no connection"}). Check your internet connection.`);
     });
   }
-  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill } });
+  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill, big: true, growthMul } });
   s.addPlayer(s.p.pike.startLengthCm);
   s.arcade = true;
   placePlayerNearPrey(s);
@@ -483,6 +534,7 @@ function openMenu(): void {
       controls: controlsPref,
       online: { name: myName, onHost: hostGame, onJoin: joinGame },
       mouse: touchOn ? undefined : mousePref,
+      gfx: gfxPref,
     },
     seed === null ? undefined : Number(seed),
   );
@@ -512,6 +564,7 @@ function pause(): void {
     controlsPref,
     net ? (net.kind === "host" ? `You are hosting lake ${net.host.code}.` : "You are in a friend's lake.") : undefined,
     touchOn ? undefined : mousePref,
+    gfxPref,
   );
 }
 
@@ -610,7 +663,12 @@ function updateHunting(s: Simulation, pl: PikeState, v: PikeScene, playing: bool
     return;
   }
   const targets = lungeTargets(s, pl);
-  const marks = computeMarks(targets, (p) => v.project(p), 5);
+  const pp = s.paramsFor(pl);
+  const tooFull = (t: LungeTarget): boolean => {
+    const grams = t.kind === "prey" ? s.prey.find((f) => f.id === t.id)?.weight : t.kind === "pike" ? s.pikes.find((k) => k.id === t.id)?.weight : undefined;
+    return grams !== undefined && tooFullFor(pl, grams, pp);
+  };
+  const marks = computeMarks(targets, (p) => v.project(p), 5, { tooFull });
   renderMarks(marksEl, marks);
   const strikeReady = marks.some((m) => m.tone === "strike"); // the rings, the hint and the Strike glow agree
   touch?.setStrikeReady(strikeReady);
@@ -669,6 +727,21 @@ function updateOnlineHud(s: Simulation, pl: PikeState, v: PikeScene): void {
 }
 
 let adaptiveRes: AdaptiveResolution | null = null;
+/** First 3 s of play decide the automatic drop to low quality (only when the player never chose a quality). */
+let fpsProbe = { acc: 0, frames: 0, done: false };
+let fpsShown = 0;
+function probeQuality(dt: number): void {
+  if (fpsProbe.done || !view) return;
+  fpsProbe.acc += dt;
+  fpsProbe.frames++;
+  if (fpsProbe.acc < 3) return;
+  fpsProbe.done = true;
+  const next = autoQuality(gfx, fpsProbe.frames / fpsProbe.acc);
+  if (next.quality === gfx.quality) return;
+  gfx = next; // not saved: an automatic drop is re-measured next session
+  view.setGfx(gfx);
+  adaptiveRes = new AdaptiveResolution(view.renderer.getPixelRatio());
+}
 let last = performance.now();
 function frame(now: number): void {
   const frameDt = Math.min(0.1, (now - last) / 1000);
@@ -696,8 +769,10 @@ function frame(now: number): void {
     drainEvents(sim, pl);
     if (mode === "playing" && !pl.alive) die();
     view.render(pl, sim.time, sim.env, frameDt, { yaw: angleDiff(wantYaw, pl.yaw), pitch: wantPitch - pl.pitch });
+    if (mode === "playing") probeQuality(frameDt);
+    if (debug && frameDt > 0) fpsShown += (1 / frameDt - fpsShown) * 0.05;
     const ratio = mode === "playing" ? adaptiveRes?.frame(frameDt) : null;
-    if (ratio) view.renderer.setPixelRatio(ratio);
+    if (ratio) view.setPixelRatio(ratio);
     if (mode === "playing") view.rig.orbit += ((keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0)) * 1.6 * frameDt;
     game.frame(frameDt, sim, pl, view, mode === "playing" && !restText.startsWith("Resting")); // no hunter clock during rest
     updateHud(sim, pl, restText);

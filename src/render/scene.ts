@@ -5,14 +5,16 @@ import type { Vec3 } from "../sim/math";
 import type { Simulation } from "../sim/simulation";
 import { CameraRig } from "./camera";
 import { seededRng, type RenderCtx } from "./ctx";
-import { buildAbove } from "./above";
+import { buildAbove, landOut } from "./above";
 import { buildExtras } from "./extras";
 import { buildFish } from "./fish";
 import { DEFAULT_GFX, type GfxSettings } from "./gfxSettings";
 import { buildParticles } from "./particles";
 import { buildPlants } from "./plants";
 import { buildTerrain } from "./terrain";
-import { buildWater, createWaterUniforms } from "./water";
+import { setOutlinesVisible } from "./outline";
+import { buildPost, pixelRatioFor, type PostChain } from "./post";
+import { buildShafts, buildWater, createWaterUniforms } from "./water";
 
 type Part = { dispose(): void };
 
@@ -34,17 +36,23 @@ export class PikeScene {
   private water: ReturnType<typeof buildWater>;
   private terrain: Part;
   private plants: Part & { padSpots: Array<[number, number]> };
+  private shafts: ReturnType<typeof buildShafts>;
+  private post: PostChain | null = null;
   private parts: Part[];
   private gfx: GfxSettings;
+  /** Draw calls in the last rendered frame, summed over every pass (for the ?debug=1 HUD). */
+  drawCalls = 0;
 
   constructor(canvas: HTMLCanvasElement, sim: Simulation, gfx: GfxSettings = { ...DEFAULT_GFX }) {
     this.gfx = gfx;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(pixelRatioFor(gfx.quality, window.devicePixelRatio));
+    this.renderer.info.autoReset = false; // the post chain renders several passes per frame; reset once per frame
     this.scene.add(this.sunlight, this.ambient);
     this.sunlight.position.set(10, 30, 5);
     this.ctx = { scene: this.scene, camera: this.camera, renderer: this.renderer, sim, gfx, uTime: { value: 0 }, water: createWaterUniforms(sim.world.maxDepth), rng: (salt) => seededRng(sim.seed * 2654435761 + salt) };
     this.rig = new CameraRig(this.camera);
+    setOutlinesVisible(this.camera, gfx.style === "stylised");
     this.fish = buildFish(this.ctx);
     this.particles = buildParticles(this.ctx);
     this.water = buildWater(this.ctx);
@@ -52,8 +60,10 @@ export class PikeScene {
     this.plants = buildPlants(this.ctx);
     this.extras = buildExtras(this.ctx);
     this.above = buildAbove(this.ctx);
-    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras, this.above];
+    this.shafts = buildShafts(this.ctx);
+    this.parts = this.partList();
     this.resize();
+    this.buildPostChain();
     window.addEventListener("resize", this.onResize);
   }
 
@@ -62,18 +72,43 @@ export class PikeScene {
     return this.plants.padSpots;
   }
 
-  /** Store new graphics settings; later tasks rebuild the quality- and style-dependent parts here. */
+  private partList(): Part[] {
+    return [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras, this.above, this.shafts];
+  }
+
+  /** High quality renders through the post chain; low renders straight to the canvas. */
+  private buildPostChain(): void {
+    this.post?.dispose();
+    this.post = this.gfx.quality === "high" ? buildPost(this.ctx) : null;
+    this.resize();
+  }
+
+  /** Render resolution multiplier (AdaptiveResolution lowers it on slow devices). */
+  setPixelRatio(r: number): void {
+    this.renderer.setPixelRatio(r);
+    this.resize();
+  }
+
+  /** Apply new graphics settings live: quality rebuilds density-dependent parts and the post chain, style rebuilds the grade. */
   setGfx(s: GfxSettings): void {
     const qualityChanged = s.quality !== this.gfx.quality;
+    const styleChanged = s.style !== this.gfx.style;
     this.gfx = s;
     this.ctx.gfx = s;
+    if (qualityChanged) this.renderer.setPixelRatio(pixelRatioFor(s.quality, window.devicePixelRatio));
+    if (qualityChanged || styleChanged) this.buildPostChain();
+    setOutlinesVisible(this.camera, s.style === "stylised");
     if (!qualityChanged) return;
-    // Quality sets plant and stone/litter density: rebuild both, freeing the old geometry and materials.
+    // Quality sets plant, stone/litter and particle density: rebuild them, freeing the old geometry and materials.
     this.terrain.dispose();
     this.plants.dispose();
+    this.particles.dispose();
     this.terrain = buildTerrain(this.ctx);
     this.plants = buildPlants(this.ctx);
-    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras, this.above];
+    this.particles = buildParticles(this.ctx);
+    this.shafts.dispose();
+    this.shafts = buildShafts(this.ctx);
+    this.parts = this.partList();
   }
 
   private onResize = (): void => this.resize();
@@ -82,7 +117,7 @@ export class PikeScene {
   dispose(): void {
     window.removeEventListener("resize", this.onResize);
     try {
-      for (const p of this.parts) {
+      for (const p of [...this.parts, ...(this.post ? [this.post] : [])]) {
         try {
           p.dispose();
         } catch (e) {
@@ -96,7 +131,10 @@ export class PikeScene {
 
   private resize(): void {
     const c = this.renderer.domElement;
-    this.renderer.setSize(c.clientWidth || window.innerWidth, c.clientHeight || window.innerHeight, false);
+    const w = c.clientWidth || window.innerWidth;
+    const h = c.clientHeight || window.innerHeight;
+    this.renderer.setSize(w, h, false);
+    this.post?.resize(w, h, this.renderer.getPixelRatio());
     this.camera.aspect = (c.clientWidth || window.innerWidth) / (c.clientHeight || window.innerHeight);
     this.baseFov = this.camera.aspect < 1 ? 75 : 65;
     this.camera.fov = this.baseFov;
@@ -125,15 +163,19 @@ export class PikeScene {
     this.fish.update(player, this.rig.hidesPlayer);
     this.rig.update(player, look, this.ctx.sim.world, dt);
     this.water.update(env, this.rig.position.y);
-    this.particles.update(timeS, dt, this.rig.position);
+    this.particles.update(timeS, dt, this.rig.position, env);
+    this.shafts.update(env, this.rig.position);
     this.extras.update(timeS);
     const inAir = this.rig.position.y > 0;
     this.above.update(timeS, dt, this.rig.position.y);
-    const far = inAir ? 420 : 120;
+    const far = inAir ? Math.max(420, landOut(this.ctx.sim.world.size / 2) + 60) : 120;
     if (this.camera.far !== far) {
       this.camera.far = far;
       this.camera.updateProjectionMatrix();
     }
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.info.reset();
+    if (this.post) this.post.render(dt, !inAir);
+    else this.renderer.render(this.scene, this.camera);
+    this.drawCalls = this.renderer.info.render.calls;
   }
 }

@@ -71,3 +71,27 @@ describe("computeMarks", () => {
     expect(computeMarks([tgt(3)], proj, 5)[0]).toMatchObject({ id: 3, x: 30, y: 5 });
   });
 });
+
+describe("computeMarks: too-full pike", () => {
+  it("a target that would be strike becomes full when tooFull says so", () => {
+    const m = computeMarks([tgt(1)], proj, 5, { tooFull: () => true });
+    expect(m[0]!.tone).toBe("full");
+  });
+  it("strike-ready is false when the only candidate is full, and a full mark is not primary-as-strike", () => {
+    const m = computeMarks([tgt(1), tgt(2, { inCone: false })], proj, 5, { tooFull: (t) => t.id === 1 });
+    expect(m.some((x) => x.tone === "strike")).toBe(false);
+    expect(m.find((x) => x.id === 1)!.tone).toBe("full");
+  });
+  it("a full edible-but-out-of-reach target is also full", () => {
+    const m = computeMarks([tgt(1, { inRange: false })], proj, 5, { tooFull: () => true });
+    expect(m[0]!.tone).toBe("full");
+  });
+  it("a non-full strike target stays primary over full ones", () => {
+    const m = computeMarks([tgt(1), tgt(2)], proj, 5, { tooFull: (t) => t.id === 1 });
+    expect(m.find((x) => x.primary)!.id).toBe(2);
+    expect(m.find((x) => x.id === 2)!.tone).toBe("strike");
+  });
+  it("without opts behaviour is unchanged", () => {
+    expect(computeMarks([tgt(1)], proj, 5)[0]!.tone).toBe("strike");
+  });
+});

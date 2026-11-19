@@ -21,6 +21,14 @@ export interface NewLifeConfig {
   map: MapShape;
   /** nothing can kill you: just swim and hunt */
   chill: boolean;
+  /** growth speed multiplier (the Growth option) */
+  growthMul: number;
+}
+
+function growthSelect(): HTMLSelectElement {
+  const sel = h("select", {});
+  sel.append(h("option", { value: "1", textContent: "Normal" }), h("option", { value: "3", textContent: "Fast (x3)" }), h("option", { value: "8", textContent: "Very fast (x8)" }));
+  return sel;
 }
 
 function playSelect(): HTMLSelectElement {
@@ -47,15 +55,42 @@ function controlsRow(c: ControlsPref): HTMLElement {
   return h("label", {}, "Controls ", sel);
 }
 
+/** Graphics settings row (start screen and pause menu). */
+export interface GfxPref {
+  style: "realistic" | "stylised";
+  quality: "high" | "low";
+  onStyle(s: "realistic" | "stylised"): void;
+  onQuality(q: "high" | "low"): void;
+}
+function graphicsRow(g: GfxPref): HTMLElement {
+  const style = h("select", { id: "gfxStyle" });
+  style.append(h("option", { value: "realistic", textContent: "Realistic" }), h("option", { value: "stylised", textContent: "Stylised" }));
+  style.value = g.style;
+  style.addEventListener("change", () => g.onStyle(style.value as GfxPref["style"]));
+  const quality = h("select", { id: "gfxQuality" });
+  quality.append(h("option", { value: "high", textContent: "High" }), h("option", { value: "low", textContent: "Low (faster)" }));
+  quality.value = g.quality;
+  quality.addEventListener("change", () => g.onQuality(quality.value as GfxPref["quality"]));
+  return h("div", { className: "gfxRow" }, h("label", {}, "Graphics ", style), h("label", {}, " Quality ", quality));
+}
+
 /** Desktop mouse preference: inverted = flight style (push the mouse forward to dive). */
 export interface MousePref {
   invertY: boolean;
   onChange(invertY: boolean): void;
+  sens: number;
+  onSens(v: number): void;
 }
 function mouseRow(m: MousePref): HTMLElement {
   const box = h("input", { type: "checkbox", checked: m.invertY });
   box.addEventListener("change", () => m.onChange(box.checked));
-  return h("label", {}, box, " Invert mouse (push forward to dive, pull back to rise)");
+  const sens = h("input", { type: "range", min: "0.2", max: "2", step: "0.1", value: String(m.sens), id: "mouseSens" });
+  const val = h("span", { textContent: m.sens.toFixed(1) });
+  sens.addEventListener("input", () => {
+    val.textContent = Number(sens.value).toFixed(1);
+    m.onSens(Number(sens.value));
+  });
+  return h("div", {}, h("label", {}, box, " Invert mouse (push forward to dive, pull back to rise)"), h("label", {}, "Mouse sensitivity ", sens, " ", val));
 }
 
 export type SaveSlot = { kind: "none" } | { kind: "ok"; sim: Simulation } | { kind: "bad"; text: string };
@@ -114,6 +149,7 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
   preset.addEventListener("change", () => (custom.style.display = preset.value === "custom" ? "block" : "none"));
   const map = mapSelect();
   const play = playSelect();
+  const growth = growthSelect();
   const danger = h("div", {}, h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom);
   danger.style.display = "none";
   play.addEventListener("change", () => (danger.style.display = play.value === "chill" ? "none" : "block"));
@@ -128,15 +164,16 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
       seed: Number(seed.value) || 1,
       map: map.value === "river" ? "river" : "lake",
       chill: play.value === "chill",
+      growthMul: Number(growth.value) || 1,
     });
   });
-  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), danger, h("label", {}, "Seed ", seed), go);
+  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), h("label", {}, "Growth ", growth), danger, h("label", {}, "Seed ", seed), go);
 }
 
 export interface OnlineHandlers {
   name: string;
   /** resolves when the lake is open; rejects with a readable message */
-  onHost(name: string, map: MapShape, chill: boolean): Promise<void>;
+  onHost(name: string, map: MapShape, chill: boolean, growthMul: number): Promise<void>;
   onJoin(name: string, code: string): Promise<void>;
 }
 
@@ -158,9 +195,10 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
   };
   const hostMap = mapSelect();
   const hostChill = h("input", { type: "checkbox", checked: true });
+  const hostGrowth = growthSelect();
   const hostBtn = button("Host", () => {
     busy(true, "Opening a lake…");
-    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked).catch(fail);
+    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked, Number(hostGrowth.value) || 1).catch(fail);
   });
   const joinBtn = button(
     "Join",
@@ -177,6 +215,7 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
     p("Share a lake with up to 5 friends: hunt the same fish, race for score, and watch out for bigger players. One of you hosts and reads out the code."),
     h("label", {}, "Name ", name),
     h("label", {}, "Water ", hostMap),
+    h("label", {}, "Growth ", hostGrowth),
     h("label", {}, hostChill, " Chill (nobody can die) ", hostBtn),
     h("label", {}, "Code ", code, " ", joinBtn),
     status,
@@ -194,6 +233,7 @@ export interface StartHandlers {
   onDownload(text: string): void;
   controls?: ControlsPref; // touch devices only
   mouse?: MousePref; // desktop only
+  gfx?: GfxPref;
 }
 
 export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: boolean, hd: StartHandlers, defaultSeed?: number): void {
@@ -208,6 +248,7 @@ export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: b
   kids.push(keysLine);
   if (hd.controls) kids.push(controlsRow(hd.controls));
   if (hd.mouse) kids.push(mouseRow(hd.mouse));
+  if (hd.gfx) kids.push(graphicsRow(hd.gfx));
   if (!storageAvailable) kids.push(p("Progress will not be saved in this browser", "warn"));
   if (slot.kind === "ok") {
     const s = slot.sim;
@@ -256,8 +297,8 @@ export function showDeath(
   mount(root, ...kids);
 }
 
-export function showPause(root: HTMLElement, milestones: MilestoneId[], onResume: () => void, onMenu: () => void, controls?: ControlsPref, online?: string, mouse?: MousePref): void {
+export function showPause(root: HTMLElement, milestones: MilestoneId[], onResume: () => void, onMenu: () => void, controls?: ControlsPref, online?: string, mouse?: MousePref, gfx?: GfxPref): void {
   const title = online ? "Menu" : "Paused";
   const note = online ? [p(`${online} The lake keeps going while this menu is open.`)] : [];
-  mount(root, h("h1", { textContent: title }), ...note, ...(controls ? [controlsRow(controls)] : []), ...(mouse ? [mouseRow(mouse)] : []), h("h2", { textContent: "Milestones" }), milestoneList(milestones), button("Resume", onResume), button(online ? "Leave the lake" : "Save and return to menu", onMenu, "secondary"));
+  mount(root, h("h1", { textContent: title }), ...note, ...(controls ? [controlsRow(controls)] : []), ...(mouse ? [mouseRow(mouse)] : []), ...(gfx ? [graphicsRow(gfx)] : []), h("h2", { textContent: "Milestones" }), milestoneList(milestones), button("Resume", onResume), button(online ? "Leave the lake" : "Save and return to menu", onMenu, "secondary"));
 }

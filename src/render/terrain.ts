@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { OUTLINE_FRAC, OUTLINE_LAYER, outlineMaterial } from "./outline";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { RenderCtx } from "./ctx";
 import { lakebedColor, lakebedFragmentPars, lakebedNormal, lakebedVertex, lakebedVertexPars } from "./shaders/lakebed.glsl";
@@ -101,7 +102,7 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
   };
 
   // Lakebed plane.
-  const seg = 160;
+  const seg = w.big ? Math.min(320, Math.round(w.size / 0.9)) : 160; // keep ~1 m cells on the game-size water
   const g = new THREE.PlaneGeometry(w.size, w.size, seg, seg);
   g.rotateX(-Math.PI / 2);
   geos.push(g);
@@ -145,7 +146,7 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
   add(new THREE.Mesh(g, bedMat));
 
   // Stones: three variants, denser in the shallows.
-  const stoneCount = low ? 300 : 600;
+  const stoneCount = Math.round((low ? 300 : 600) * Math.min(3, w.areaMul));
   const sr = ctx.rng(4242);
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
   finish(stoneMat);
@@ -191,6 +192,11 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
     const m = new THREE.Mesh(lg, logMat);
     m.rotation.set(0, -l.yaw, Math.PI / 2 + 0.12);
     m.position.set(l.x, l.y, l.z);
+    const hullMat = outlineMaterial(ctx, OUTLINE_FRAC * l.length);
+    mats.push(hullMat);
+    const hull = new THREE.Mesh(lg, hullMat);
+    hull.layers.set(OUTLINE_LAYER);
+    m.add(hull);
     add(m);
   }
 
