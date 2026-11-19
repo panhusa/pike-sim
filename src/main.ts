@@ -27,11 +27,47 @@ import { isTouchDevice, loadControlMode, mountTouchControls, requestMotionPermis
 import { persistDeath, persistNewLife } from "./ui/policy";
 import { browserStorage, createSaveStore } from "./ui/storage";
 import { GamepadInput, type PadState } from "./ui/gamepad";
+import { openPadSetup, padSetupOpen } from "./ui/padSetup";
+import { SessionRecorder } from "./ui/recorder";
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $("c") as HTMLCanvasElement;
 const overlay = $("overlay");
 const query = new URLSearchParams(location.search);
+
+// --- session recorder: F9 (or ?rec=1) records video + a JSON log of inputs and play, F9 again saves both ---
+const rec = new SessionRecorder();
+const recMouse = { dx: 0, dy: 0 };
+let recMode = "";
+let recLastInput: PikeInput = { throttle: 0, yawRate: 0, pitchRate: 0, burst: false };
+const recBadge = Object.assign(document.createElement("div"), { textContent: "● REC  (F9 to stop and save)" });
+recBadge.style.cssText = "position:fixed;left:50%;bottom:8px;transform:translateX(-50%);color:#ff5b4f;font:600 12px system-ui;text-shadow:0 1px 3px #000;pointer-events:none;display:none;z-index:25";
+document.body.append(recBadge);
+function recStart(): void {
+  if (rec.active) return;
+  const s = sim;
+  rec.start(canvas, {
+    url: location.href,
+    userAgent: navigator.userAgent,
+    screen: [innerWidth, innerHeight, devicePixelRatio],
+    touch: touchOn,
+    pad: GamepadInput.first()?.id ?? null,
+    gfx: { ...gfx },
+    settings: s ? { ...s.settings } : null,
+    mouseSens,
+    invertMouse,
+  });
+  recBadge.style.display = "block";
+  say("Recording: F9 to stop and save", 2500);
+}
+async function recStop(): Promise<void> {
+  if (!rec.active) return;
+  recBadge.style.display = "none";
+  const r = await rec.stop();
+  if (r) say(r.video ? "Saved pike-….json and .webm to Downloads" : "Saved pike-….json to Downloads (no video in this browser)", 4000);
+}
+addEventListener("error", (e) => rec.event("error", { message: e.message, at: `${e.filename}:${e.lineno}` }));
+addEventListener("unhandledrejection", (e) => rec.event("error", { message: String(e.reason) }));
 const debug = query.get("debug") === "1";
 const store = createSaveStore(browserStorage());
 // --- camera: C cycles modes, wheel zooms, Q/E orbit, V resets; the mode is remembered ---
@@ -57,6 +93,7 @@ function nextCamera(): void {
   }
   showCameraLabel();
   say(`Camera: ${CAMERA_LABEL[m]}`, 1500);
+  rec.event("camera", { mode: m });
 }
 addEventListener(
   "wheel",
@@ -206,6 +243,11 @@ addEventListener("keydown", (e) => {
   keys.add(e.code);
   game.audio.unlock();
   if (e.code === "KeyH") toggleKeys();
+  if (e.code === "F9") {
+    e.preventDefault();
+    if (rec.active) void recStop();
+    else recStart();
+  }
   if (e.code === "KeyN") say(minimap.toggle() ? "Minimap on (N)" : "Minimap off (N)");
   if (e.code === "KeyM") say(game.audio.toggleMute() ? "Sound off (M)" : "Sound on (M)");
   if (e.code === "KeyC" && mode === "playing") nextCamera();
@@ -229,6 +271,8 @@ addEventListener("mousemove", (e) => {
   const k = MOUSE_RAD_PER_PX * mouseSens;
   const pl = sim?.player();
   wantYaw += e.movementX * k;
+  recMouse.dx += e.movementX;
+  recMouse.dy += e.movementY;
   if (e.movementY) pitchHeld = false;
   if (pl) wantYaw = pl.yaw + clamp(angleDiff(wantYaw, pl.yaw), -MAX_LEAD, MAX_LEAD);
   wantPitch = clamp(wantPitch - e.movementY * k * (invertMouse ? -1 : 1), -0.9, 0.9);
@@ -271,6 +315,10 @@ function stickContext(): { yaw: number; pitch: number; camYaw: number } | undefi
 }
 
 function playerInput(pl: PikeState): PikeInput {
+  return (recLastInput = playerInputRaw(pl));
+}
+
+function playerInputRaw(pl: PikeState): PikeInput {
   const kbThrottle = Math.max(pad.throttle, keys.has("KeyW") || keys.has("ArrowUp") ? (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.25 : 1) : 0);
   const burst = burstQueued || !!touchIn?.burst;
   burstQueued = false;
@@ -336,8 +384,20 @@ function handleEvent(e: SimEvent, s: Simulation, pl: PikeState): void {
   if (!("pikeId" in e) || e.pikeId !== pl.id) return;
   sayOutcome(outcomes.push(e), s); // one line per burst: outcomes are buffered until the burst is over
 }
+/** Sim events about the player (or the hunter after them) go into the recording. */
+function recSimEvent(e: Simulation["events"][number], pl: PikeState): void {
+  const r = e as unknown as Record<string, unknown>;
+  const mine = r.pikeId === pl.id || r.targetId === pl.id || e.type === "milestone";
+  if (!mine) return;
+  const { t, type: _type, ...rest } = r;
+  rec.event(`sim-${e.type}`, { ...rest, simT: Math.round((t as number) * 100) / 100 });
+}
+
 function drainEvents(s: Simulation, pl: PikeState): void {
-  for (; eventCursor < s.events.length; eventCursor++) handleEvent(s.events[eventCursor]!, s, pl);
+  for (; eventCursor < s.events.length; eventCursor++) {
+    if (rec.active) recSimEvent(s.events[eventCursor]!, pl);
+    handleEvent(s.events[eventCursor]!, s, pl);
+  }
   if (s.events.length < eventCursor) eventCursor = s.events.length; // buffer was trimmed
   sayOutcome(outcomes.end(pl.alive && pl.burstTimeLeft > 0), s);
 }
@@ -421,6 +481,8 @@ function enter(next: Simulation): void {
   mode = "playing";
   hideOverlay(overlay);
   if (!touchOn) lockPointer();
+  if (query.get("rec") === "1") recStart();
+  rec.event("enter", { settings: { ...sim.settings }, lengthCm: pl.lengthCm, online: net?.kind ?? null });
 }
 
 function newLife(settings: SimSettings, seed: number): void {
@@ -560,6 +622,7 @@ function openMenu(): void {
       online: { name: myName, onHost: hostGame, onJoin: joinGame },
       mouse: touchOn ? undefined : mousePref,
       gfx: gfxPref,
+      padSetup: touchOn ? undefined : () => openPadSetup(gamepad.maps),
     },
     seed === null ? undefined : Number(seed),
   );
@@ -567,6 +630,7 @@ function openMenu(): void {
 
 function pause(): void {
   if (mode !== "playing" || !sim) return;
+  rec.event("pause");
   mode = "paused";
   keys.clear();
   touchIn = null;
@@ -590,6 +654,7 @@ function pause(): void {
     net ? (net.kind === "host" ? `You are hosting lake ${net.host.code}.` : "You are in a friend's lake.") : undefined,
     touchOn ? undefined : mousePref,
     gfxPref,
+    touchOn ? undefined : () => openPadSetup(gamepad.maps),
   );
 }
 
@@ -769,6 +834,41 @@ function probeQuality(dt: number): void {
   view.setGfx(gfx);
   adaptiveRes = new AdaptiveResolution(view.renderer.getPixelRatio());
 }
+/** One recorder sample (REC_HZ): the pike, what the player asked for, the camera and the frame rate. */
+function recFrame(s: Simulation, pl: PikeState, frameDt: number): void {
+  if (mode !== recMode) {
+    rec.event("mode", { mode });
+    recMode = mode;
+  }
+  if (!rec.due() || !view) return;
+  const r2 = (v: number): number => Math.round(v * 100) / 100;
+  const r3 = (v: number): number => Math.round(v * 1000) / 1000;
+  const held = [...keys].filter((k) => /^(Key[WASDFRQE]|Arrow|Shift|Space)/.test(k));
+  rec.sample({
+    mode,
+    pos: [r2(pl.pos.x), r2(pl.pos.y), r2(pl.pos.z)],
+    floor: r2(s.world.bottomY(pl.pos.x, pl.pos.z)),
+    yaw: r3(pl.yaw),
+    pitch: r3(pl.pitch),
+    wantYaw: r3(wantYaw),
+    wantPitch: r3(wantPitch),
+    speed: r2(pl.speed),
+    lengthCm: r2(pl.lengthCm),
+    energy: Math.round(pl.energy),
+    burst: pl.burstTimeLeft > 0,
+    lock: pl.lockId,
+    in: { th: r2(recLastInput.throttle), yr: r2(recLastInput.yawRate), pr: r2(recLastInput.pitchRate), b: recLastInput.burst },
+    mouse: [recMouse.dx, recMouse.dy],
+    keys: held,
+    pad: pad.connected ? { turn: r2(pad.turn), pitch: r2(pad.pitch), th: r2(pad.throttle), rest: pad.rest } : null,
+    touch: touchIn ? { yr: r2(touchIn.yawRate), pr: r2(touchIn.pitchRate), th: r2(touchIn.throttle) } : null,
+    cam: { mode: view.rig.mode, zoom: r2(view.rig.zoom), orbit: r2(view.rig.orbit), pos: [r2(view.rig.position.x), r2(view.rig.position.y), r2(view.rig.position.z)] },
+    fps: frameDt > 0 ? Math.round(1 / frameDt) : 0,
+    quality: gfx.quality,
+  });
+  recMouse.dx = recMouse.dy = 0;
+}
+
 let last = performance.now();
 /** The overlay's main button (keyboard Enter / gamepad A on a menu): resume, continue, respawn or start. */
 function overlayDefault(): HTMLButtonElement | null {
@@ -780,7 +880,7 @@ function overlayDefault(): HTMLButtonElement | null {
   return null;
 }
 addEventListener("keydown", (e) => {
-  if (e.code !== "Enter" || mode === "playing" || overlay.style.display === "none") return;
+  if (e.code !== "Enter" || mode === "playing" || overlay.style.display === "none" || padSetupOpen()) return;
   const t = e.target as HTMLElement | null;
   if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "BUTTON")) return; // native Enter there
   overlayDefault()?.click();
@@ -788,6 +888,10 @@ addEventListener("keydown", (e) => {
 
 /** Gamepad buttons and keyboard/stick steering, once per rendered frame. */
 function padAndKeys(frameDt: number): void {
+  if (padSetupOpen()) {
+    pad = gamepad.read([]); // the setup screen owns the controller while it is open
+    return;
+  }
   pad = gamepad.read();
   if (pad.minimap) say(minimap.toggle() ? "Minimap on" : "Minimap off");
   if (mode !== "playing") {
@@ -805,7 +909,7 @@ function padAndKeys(frameDt: number): void {
   const turn = kbTurn || pad.turn * 1.3;
   if (turn) wantYaw = pl.yaw + clamp(angleDiff(wantYaw + turn * KB_TURN_RAD_S * frameDt, pl.yaw), -MAX_LEAD, MAX_LEAD);
   const kbPitch = (keys.has("KeyF") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
-  const pitch = kbPitch || pad.pitch * (invertMouse ? -1 : 1);
+  const pitch = kbPitch || pad.pitch * (pad.standard && invertMouse ? -1 : 1);
   const move = (target: number, rate: number): void => {
     wantPitch += clamp(target - wantPitch, -rate * frameDt, rate * frameDt);
   };
@@ -843,6 +947,7 @@ function frame(now: number): void {
       autosave(true);
     }
     drainEvents(sim, pl);
+    if (rec.active) recFrame(sim, pl, frameDt);
     if (mode === "playing" && !pl.alive) die();
     view.render(pl, sim.time, sim.env, frameDt, { yaw: angleDiff(wantYaw, pl.yaw), pitch: wantPitch - pl.pitch });
     if (mode === "playing") probeQuality(frameDt);

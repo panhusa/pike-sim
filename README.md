@@ -30,11 +30,17 @@ are generated in code. There are no image or model files.
 "Mouse sensitivity" sets how far the pike turns per mouse movement. A strike aims at the fish for a split second, then shoots straight.
 
 **No mouse:** the keyboard alone works (`A`/`D` turn, `S`/`F` dive/rise, `W` swim, `Space` strike, `Enter` on a menu),
-and so does a gamepad: left stick steer, RT swim, LT stalk, A/RB strike, B rest, Y camera, right stick orbit,
-Start pause, Back minimap, A on a menu to resume/continue/start.
+and so does a gamepad (PlayStation names, Xbox in brackets): left stick steer, R2 (RT) swim, L2 (LT) stalk,
+✕ or R1 (A / RB) strike, ○ (B) rest, △ (Y) camera, right stick orbit, Options pause, Share minimap,
+✕ on a menu to resume/continue/start. **Controller setup** (start screen or menu) re-binds any action, for
+any controller.
 
 **Phone:** joystick to steer and swim (push further to go faster) · Strike · Rest · Cam · Pause.
 Tilt steering can be chosen on the start screen.
+
+**Recording:** `F9` starts recording (or open the game with `?rec=1`): the 3D view as a `.webm` video and a `.json`
+log of inputs, the pike's movement, camera, frame rate and catches/strikes. `F9` again saves both to Downloads.
+Nothing is uploaded.
 
 ## Multiplayer
 One player picks lake or river, clicks **Host** and reads out the 5-letter code; friends enter it and click **Join**.

@@ -234,6 +234,13 @@ export interface StartHandlers {
   controls?: ControlsPref; // touch devices only
   mouse?: MousePref; // desktop only
   gfx?: GfxPref;
+  /** opens Controller setup (any gamepad or joystick) */
+  padSetup?: () => void;
+}
+
+function padSetupRow(open: () => void): HTMLElement {
+  const b = button("Controller setup", open, "secondary");
+  return h("div", {}, b);
 }
 
 export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: boolean, hd: StartHandlers, defaultSeed?: number): void {
@@ -249,6 +256,7 @@ export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: b
   if (hd.controls) kids.push(controlsRow(hd.controls));
   if (hd.mouse) kids.push(mouseRow(hd.mouse));
   if (hd.gfx) kids.push(graphicsRow(hd.gfx));
+  if (hd.padSetup) kids.push(padSetupRow(hd.padSetup));
   if (!storageAvailable) kids.push(p("Progress will not be saved in this browser", "warn"));
   if (slot.kind === "ok") {
     const s = slot.sim;
@@ -297,8 +305,8 @@ export function showDeath(
   mount(root, ...kids);
 }
 
-export function showPause(root: HTMLElement, milestones: MilestoneId[], onResume: () => void, onMenu: () => void, controls?: ControlsPref, online?: string, mouse?: MousePref, gfx?: GfxPref): void {
+export function showPause(root: HTMLElement, milestones: MilestoneId[], onResume: () => void, onMenu: () => void, controls?: ControlsPref, online?: string, mouse?: MousePref, gfx?: GfxPref, padSetup?: () => void): void {
   const title = online ? "Menu" : "Paused";
   const note = online ? [p(`${online} The lake keeps going while this menu is open.`)] : [];
-  mount(root, h("h1", { textContent: title }), ...note, ...(controls ? [controlsRow(controls)] : []), ...(mouse ? [mouseRow(mouse)] : []), ...(gfx ? [graphicsRow(gfx)] : []), h("h2", { textContent: "Milestones" }), milestoneList(milestones), button("Resume", onResume), button(online ? "Leave the lake" : "Save and return to menu", onMenu, "secondary"));
+  mount(root, h("h1", { textContent: title }), ...note, ...(controls ? [controlsRow(controls)] : []), ...(mouse ? [mouseRow(mouse)] : []), ...(gfx ? [graphicsRow(gfx)] : []), ...(padSetup ? [padSetupRow(padSetup)] : []), h("h2", { textContent: "Milestones" }), milestoneList(milestones), button("Resume", onResume), button(online ? "Leave the lake" : "Save and return to menu", onMenu, "secondary"));
 }
