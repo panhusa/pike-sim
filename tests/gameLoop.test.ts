@@ -36,6 +36,18 @@ describe("stages", () => {
 });
 
 describe("Challenges", () => {
+  it("Chill never asks for goals that need a hunting pike", () => {
+    const c = new Challenges({ chill: true });
+    const seen = new Set<string>();
+    for (let i = 0; i < CHALLENGES.length * 2; i++) {
+      seen.add(c.current.id);
+      expect(c.current.danger).toBeUndefined();
+      c.index++;
+    }
+    expect(seen.has("survive")).toBe(false);
+    expect(new Challenges().current.id).toBe(CHALLENGES[0]!.id);
+  });
+
   it("completes the first challenge and moves on", () => {
     const c = new Challenges();
     expect(c.current.id).toBe(CHALLENGES[0]!.id);

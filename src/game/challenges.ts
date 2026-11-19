@@ -12,6 +12,8 @@ export interface ChallengeDef {
   text: string;
   bonus: number;
   target: number;
+  /** needs a hunting pike, so it is left out in Chill (no hunters there) */
+  danger?: true;
   /** progress increment for an event given the progress state */
   step(e: ChallengeEvent, st: { times: number[] }): number;
 }
@@ -44,7 +46,7 @@ export const CHALLENGES: ChallengeDef[] = [
   catchKind("perch", 1, 500),
   { id: "insects-3", text: "Snap up 3 insects off the surface", bonus: 500, target: 3, step: (e) => (e.type === "catch" && e.kind === "insect" ? 1 : 0) },
   { id: "big-one", text: "Catch a fish over 15 cm", bonus: 700, target: 1, step: (e) => (isFish(e) && e.type === "catch" && e.lengthCm > 15 ? 1 : 0) },
-  { id: "survive", text: "Survive a hunting pike", bonus: 800, target: 1, step: (e) => (e.type === "hunter-survived" ? 1 : 0) },
+  { id: "survive", text: "Survive a hunting pike", bonus: 800, target: 1, danger: true, step: (e) => (e.type === "hunter-survived" ? 1 : 0) },
   catchKind("rudd", 2, 500),
   { id: "throw-hook", text: "Get hooked by a lure and throw the hook", bonus: 1500, target: 1, step: (e) => (e.type === "hook-thrown" ? 1 : 0) },
   { id: "catch-any-5", text: "Catch 5 fish", bonus: 900, target: 5, step: (e) => (isFish(e) ? 1 : 0) },
@@ -55,9 +57,15 @@ export class Challenges {
   progress = 0;
   completed = 0;
   private st = { times: [] as number[] };
+  private readonly list: ChallengeDef[];
+
+  /** `chill`: skip goals that need a hunting pike. */
+  constructor(opts: { chill?: boolean } = {}) {
+    this.list = opts.chill ? CHALLENGES.filter((c) => !c.danger) : CHALLENGES;
+  }
 
   get current(): ChallengeDef {
-    return CHALLENGES[this.index % CHALLENGES.length]!;
+    return this.list[this.index % this.list.length]!;
   }
 
   /** Feed an event; returns the finished challenge (and its bonus) when this event completed it. */

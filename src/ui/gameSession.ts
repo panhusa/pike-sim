@@ -53,7 +53,7 @@ export class GameSession {
   /** A life starts or resumes. */
   enter(sim: Simulation): void {
     this.score = new Score();
-    this.goals = new Challenges();
+    this.goals = new Challenges({ chill: sim.chill });
     this.danger = new DangerClock();
     this.playT = 0;
     this.hunterId = null;
