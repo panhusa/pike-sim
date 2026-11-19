@@ -11,7 +11,8 @@ import { growPreyDay, preyMortalityDay } from "./preyLife";
 import { cohortsDay, stepSpawning, type Cohort, type SpawnState } from "./spawning";
 import { World } from "./world";
 import { HUNTER, hunterInput, hunterMinLength, type Hunter } from "./hunter";
-import { ANGLER, Extras, type ExtraEvent } from "./extras";
+import { ANGLER, Extras, type ExtraEvent, type Insect } from "./extras";
+import { leapStep, type Airborne, type LeapEvent } from "./leap";
 
 export type MissReason = "evaded" | "too-big" | "full" | "off-axis";
 
@@ -27,6 +28,7 @@ export type SimEvent =
   | { type: "recruit-pike"; cohortId: number; pikeIds: number[]; t: number }
   | { type: "milestone"; id: MilestoneId; t: number }
   | ExtraEvent
+  | LeapEvent
   | { type: "bitten"; pikeId: number; byPikeId: number; health: number; t: number }
   | { type: "hunter-start"; hunterId: number; targetId: number; lengthCm: number; t: number }
   | { type: "hunter-end"; hunterId: number; targetId: number; outcome: NonNullable<Hunter["outcome"]>; t: number };
@@ -100,6 +102,8 @@ export class Simulation {
   arcade = false;
   /** Other human players' pike (multiplayer guests; transient, not saved). They get the arcade tuning like the player. */
   readonly humanIds = new Set<number>();
+  /** Game leaps in progress, by pike id (arcade humans only; transient). */
+  airborne = new Map<number, Airborne>();
   /** Insects and the fisherman (arcade only; transient, own RNG). */
   extras: Extras;
   /** Active game hunter event (transient, not saved). */
@@ -367,7 +371,12 @@ export class Simulation {
         if (t) input = homingInput(pk, t.pos);
         else pk.lockId = null;
       }
-      stepPike(pk, input, this.env.tempC, dt, this.paramsFor(pk), this.bioScale);
+      // out of the water (game leap): ballistic flight instead of swimming; burst timers still run down
+      const flying = this.airborne.has(pk.id);
+      if (flying) {
+        pk.burstCooldown = Math.max(0, pk.burstCooldown - dt);
+        pk.burstTimeLeft = Math.max(0, pk.burstTimeLeft - dt);
+      } else stepPike(pk, input, this.env.tempC, dt, this.paramsFor(pk), this.bioScale);
       if (this.arcade && this.isHuman(pk) && pk.alive && pk.health < 1 && condition(pk, this.p) >= 0.8)
         pk.health = Math.min(1, pk.health + ARCADE_HEAL_PER_S * dt);
       if (before > 0 && pk.burstTimeLeft <= 0) {
@@ -380,8 +389,10 @@ export class Simulation {
         pk.deathCause = "starvation";
         this.events.push({ type: "death", pikeId: pk.id, cause: "starvation", t: this.time });
       }
-      this.world.confine(pk.pos, 0.1);
-      if (this.arcade && pk.alive) this.extras.afterPikeStep(this, pk, starting, dt, (p) => this.landed(p));
+      const leaping = this.arcade && pk.alive && this.isHuman(pk) && (this.extras.angler?.hookedId ?? -1) !== pk.id && leapStep(this, pk, dt, true);
+      if (leaping) this.world.confineXZ(pk.pos);
+      else this.world.confine(pk.pos, 0.1);
+      if (this.arcade && pk.alive && !leaping) this.extras.afterPikeStep(this, pk, starting, dt, (p) => this.landed(p));
       if (pk.burstTimeLeft <= 0) this.clearAttempts(pk.id);
     }
 
@@ -495,15 +506,19 @@ export class Simulation {
     }
     const key = `${pk.id}:${pk.burstSerial}:insect`;
     if (this.attempted.has(key)) return false;
-    const room = stomachRoom(pk, this.p);
     const bug = this.extras.eatInsectAt(mouth, reach * 1.2, pk.pos.y > -0.12);
     if (!bug) return false;
     this.attempted.add(key);
     this.hadOutcome.add(pk.id);
-    const grams = Math.min(bug.grams, Math.max(room, 0.1));
+    this.feedInsect(pk, bug);
+    return true;
+  }
+
+  /** An insect goes down: grams into the stomach (always a little room for a bug) and a capture event. */
+  feedInsect(pk: PikeState, bug: Insect): void {
+    const grams = Math.min(bug.grams, Math.max(stomachRoom(pk, this.p), 0.1));
     pk.stomachG += grams;
     this.events.push({ type: "capture", pikeId: pk.id, preyId: bug.id, kind: "insect", grams, lengthCm: 2, t: this.time });
-    return true;
   }
 
   private resolveStrikes(pk: PikeState): void {

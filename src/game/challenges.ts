@@ -2,7 +2,8 @@
 export type ChallengeEvent =
   | { type: "catch"; kind: string; lengthCm: number; t: number }
   | { type: "hunter-survived" }
-  | { type: "hook-thrown" };
+  | { type: "hook-thrown" }
+  | { type: "leap" };
 
 const isFish = (e: ChallengeEvent): boolean => e.type === "catch" && e.kind !== "insect";
 
@@ -39,6 +40,7 @@ export const CHALLENGES: ChallengeDef[] = [
       return st.times.length >= 2 ? 1 : 0;
     },
   },
+  { id: "leap", text: "Leap out of the water (swim up fast + Strike)", bonus: 400, target: 1, step: (e) => (e.type === "leap" ? 1 : 0) },
   catchKind("perch", 1, 500),
   { id: "insects-3", text: "Snap up 3 insects off the surface", bonus: 500, target: 3, step: (e) => (e.type === "catch" && e.kind === "insect" ? 1 : 0) },
   { id: "big-one", text: "Catch a fish over 15 cm", bonus: 700, target: 1, step: (e) => (isFish(e) && e.type === "catch" && e.lengthCm > 15 ? 1 : 0) },

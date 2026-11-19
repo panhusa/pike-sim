@@ -14,6 +14,8 @@ are generated in code. There are no image or model files.
 - Every few minutes a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.
   A bite costs one of your three hearts; hearts come back over time.
 - Insects fall onto the surface: strike them from just below for a snack. Mayflies dance above the water.
+- Swim up fast and Strike near the surface to **leap** out of the water: you get a look at the shore,
+  the forest and the sky, and can snap mayflies in mid-air.
 - Now and then a boat drifts over and an angler casts a lure. It looks like a fish, but a strike gets you
   **hooked**: mash Strike and swim away from the boat to throw the hook. If you get landed, the angler lets
   you go only if you have hearts to spare.

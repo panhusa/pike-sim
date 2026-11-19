@@ -130,6 +130,17 @@ export class GameAudio {
     if (mult > 1) this.tone(f * 1.5, 0.3, 0.1, "triangle", undefined, 0.14);
   }
 
+  /** Breaking out of the water: a bright splash. */
+  leap(): void {
+    this.swoosh(1200, 4000, 0.3, 0.45, 2);
+  }
+
+  /** Falling back in: a heavier plop and spray. */
+  splash(): void {
+    this.tone(160, 0.2, 0.5, "sine", 60);
+    this.swoosh(3500, 700, 0.5, 0.5, 2);
+  }
+
   miss(): void {
     this.swoosh(900, 250, 0.25, 0.25, 2);
   }

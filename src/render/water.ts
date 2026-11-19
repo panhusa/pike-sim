@@ -71,6 +71,11 @@ export interface WaterUniforms {
   uWaterMaxDepth: { value: number };
   /** Env light 0..1, drives the caustic fade. */
   uWaterLight: { value: number };
+  /** The sky above the water (linear), for the surface seen from the air and the sky dome. */
+  uAirZenith: { value: THREE.Color };
+  uAirHorizon: { value: THREE.Color };
+  /** Unit vector toward the sun. */
+  uSunDir: { value: THREE.Vector3 };
 }
 
 export function createWaterUniforms(maxDepth: number): WaterUniforms {
@@ -81,6 +86,9 @@ export function createWaterUniforms(maxDepth: number): WaterUniforms {
     uWaterFloor: { value: 0.06 },
     uWaterMaxDepth: { value: maxDepth },
     uWaterLight: { value: 1 },
+    uAirZenith: { value: new THREE.Color() },
+    uAirHorizon: { value: new THREE.Color() },
+    uSunDir: { value: new THREE.Vector3(10, 30, 5).normalize() },
   };
 }
 
@@ -146,6 +154,11 @@ const DAY_SKY_EDGE = new THREE.Color().setRGB(0.7, 0.82, 0.84, THREE.SRGBColorSp
 const NIGHT_SKY = new THREE.Color().setRGB(0.16, 0.22, 0.32, THREE.SRGBColorSpace);
 const NIGHT_SKY_EDGE = new THREE.Color().setRGB(0.09, 0.13, 0.19, THREE.SRGBColorSpace);
 
+const AIR_ZENITH_DAY = new THREE.Color().setRGB(0.32, 0.55, 0.9, THREE.SRGBColorSpace);
+const AIR_HORIZON_DAY = new THREE.Color().setRGB(0.78, 0.86, 0.93, THREE.SRGBColorSpace);
+const AIR_ZENITH_NIGHT = new THREE.Color().setRGB(0.02, 0.03, 0.08, THREE.SRGBColorSpace);
+const AIR_HORIZON_NIGHT = new THREE.Color().setRGB(0.08, 0.1, 0.16, THREE.SRGBColorSpace);
+
 /** The water volume (shared uniforms, background) and the surface seen from below (Snell's window). */
 export function buildWater(ctx: RenderCtx): { update(env: Environment, cameraY: number): void; dispose(): void } {
   const w = ctx.sim.world;
@@ -175,8 +188,11 @@ export function buildWater(ctx: RenderCtx): { update(env: Environment, cameraY: 
       u.uWaterDensity.value = look.density;
       u.uWaterFloor.value = look.ambientFloor;
       u.uWaterLight.value = env.light;
-      background.setRGB(...absorptionColor(Math.max(0, -cameraY), look, w.maxDepth), THREE.SRGBColorSpace);
       const t = dayness(env.light);
+      u.uAirZenith.value.copy(AIR_ZENITH_NIGHT).lerp(AIR_ZENITH_DAY, t);
+      u.uAirHorizon.value.copy(AIR_HORIZON_NIGHT).lerp(AIR_HORIZON_DAY, t);
+      if (cameraY > 0) background.copy(u.uAirHorizon.value);
+      else background.setRGB(...absorptionColor(Math.max(0, -cameraY), look, w.maxDepth), THREE.SRGBColorSpace);
       uniforms.uSky.value.copy(NIGHT_SKY).lerp(DAY_SKY, t);
       uniforms.uSkyEdge.value.copy(NIGHT_SKY_EDGE).lerp(DAY_SKY_EDGE, t);
     },

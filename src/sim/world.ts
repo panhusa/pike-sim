@@ -131,6 +131,16 @@ export class World {
     for (const l of this.logs) add((c) => c.logs, l, l.x, l.z, l.length * 0.6);
   }
 
+  /** Keep a leaping fish over the lake (horizontal limit only). */
+  confineXZ(pos: Vec3): void {
+    const maxR = this.size / 2 - 1.5;
+    const r = Math.hypot(pos.x, pos.z);
+    if (r > maxR) {
+      pos.x *= maxR / r;
+      pos.z *= maxR / r;
+    }
+  }
+
   /** Keep a fish inside the water volume; returns true if it was pushed back. */
   confine(pos: Vec3, margin = 0.15): boolean {
     let hit = false;

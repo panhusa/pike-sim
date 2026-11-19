@@ -33,10 +33,20 @@ vec3 waterRayTint(vec3 wp) {
 
 // Depth tint (red is absorbed first on the way down), a moonlit-blue minimum ambient term so dark scenes stay
 // readable, then distance absorption.
+// Share of the camera->point segment that runs under the surface (1 when both are underwater).
+float underwaterShare(vec3 wp) {
+  float a = cameraPosition.y, b = wp.y;
+  if (a <= 0.0 && b <= 0.0) return 1.0;
+  if (a > 0.0 && b > 0.0) return 0.0;
+  return max(-a, -b) / max(abs(a - b), 1e-4);
+}
+
 vec3 waterVolume(vec3 col, vec3 albedo, vec3 wp) {
+  float share = underwaterShare(wp);
+  if (share <= 0.0) return col; // in the air, seen from the air
   col *= exp(-max(0.0, -wp.y) * uWaterDensity * 0.5 * vec3(1.5, 0.85, 0.95));
   col = max(col, albedo * uWaterFloor * vec3(0.85, 0.95, 1.15));
-  float f = 1.0 - exp(-uWaterDensity * length(wp - cameraPosition));
+  float f = 1.0 - exp(-uWaterDensity * length(wp - cameraPosition) * share);
   return mix(col, waterRayTint(wp), f);
 }`;
 

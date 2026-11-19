@@ -5,6 +5,7 @@
  * instant, and softly corrected toward the host's authoritative state.
  */
 import { environmentAt } from "../sim/environment";
+import { leapStep } from "../sim/leap";
 import { forward } from "../sim/math";
 import { makePike, stepPike, type PikeInput, type PikeState } from "../sim/pike";
 import type { PreyState } from "../sim/prey";
@@ -161,10 +162,14 @@ export class NetGuest {
     this.lastInput = { ...input, burst: input.burst || this.lastInput.burst };
 
     if (me && me.alive && this.gotSnap) {
-      stepPike(me, input, sim.env.tempC, dt, sim.paramsFor(me), 1);
-      sim.world.confine(me.pos, 0.1);
+      // leaps are predicted locally too (the host eats the mayflies), so the arc is smooth
+      const flying = sim.airborne.has(me.id);
+      if (!flying) stepPike(me, input, sim.env.tempC, dt, sim.paramsFor(me), 1);
+      const inAir = leapStep(sim, me, dt, false);
+      if (inAir) sim.world.confineXZ(me.pos);
+      else sim.world.confine(me.pos, 0.1);
       const t = this.targets.get(me.id);
-      if (t) {
+      if (t && !inAir && !flying) {
         // the host's position is ~half a round trip old; lead it by the current velocity before blending
         const age = (now - t.at) / 1000;
         const f = forward(me.yaw, me.pitch);

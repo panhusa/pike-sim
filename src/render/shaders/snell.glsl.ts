@@ -17,6 +17,10 @@ ${absorptionPars}
 uniform float uTime;
 uniform vec3 uSky;
 uniform vec3 uSkyEdge;
+uniform vec3 uAirZenith;
+uniform vec3 uAirHorizon;
+uniform vec3 uSunDir;
+uniform float uWaterLight;
 uniform sampler2D uNoise;
 varying vec3 vWorld;
 const float SNELL_COS = ${SNELL_COS.toFixed(5)};
@@ -38,6 +42,19 @@ void main() {
   g += (texture2D(uNoise, p * 0.23 - vec2(uTime * 0.017, -uTime * 0.011)).rg - 0.5) * 0.06;
   vec3 n = normalize(vec3(-g.x, 1.0, -g.y));
   vec3 v = normalize(vWorld - cameraPosition);
+  if (cameraPosition.y > 0.0) {
+    // From above: Fresnel mix of the sky's reflection and the lake's own colour; see-through when steep.
+    vec3 rv = reflect(v, n);
+    float fres = 0.04 + 0.96 * pow(1.0 - clamp(-dot(v, n), 0.0, 1.0), 5.0);
+    vec3 refl = mix(uAirHorizon, uAirZenith, clamp(rv.y * 1.6, 0.0, 1.0));
+    float sun = pow(max(dot(rv, uSunDir), 0.0), 220.0) * 3.0 * uWaterLight;
+    vec3 body = uWaterDeep * 0.8 + uWaterShallow * 0.15;
+    vec3 c = mix(body, refl, fres) + sun;
+    gl_FragColor = vec4(c, clamp(0.55 + fres * 0.6, 0.0, 0.96));
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
   float cosI = abs(dot(v, n));
   float inWindow = smoothstep(SNELL_COS - 0.025, SNELL_COS + 0.025, cosI);
   // The whole sky hemisphere is squeezed into the disc: zenith in the centre, horizon at the rim.

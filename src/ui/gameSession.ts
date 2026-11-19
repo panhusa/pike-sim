@@ -38,6 +38,8 @@ export class GameSession {
   /** pike hunting us, known from events (guests have no sim.hunter) */
   private hunterId: number | null = null;
   private playT = 0;
+  /** the first leap of a life gets a hint banner */
+  private leapt = false;
 
   constructor(canvas: HTMLElement) {
     this.juice = new Juice(canvas);
@@ -55,6 +57,7 @@ export class GameSession {
     this.danger = new DangerClock();
     this.playT = 0;
     this.hunterId = null;
+    this.leapt = false;
     const pl = sim.player();
     this.stageIndex = pl ? stageOf(pl.lengthCm).index : 0;
     this.juice.clear();
@@ -119,6 +122,20 @@ export class GameSession {
           this.juice.showBanner(e.outcome === "escaped" ? "It lost you!" : "You got away!", `+${DANGER.SURVIVE_BONUS}`, "good");
           this.goal(this.goals.push({ type: "hunter-survived" }));
         }
+        return;
+      case "leap":
+        if (e.pikeId !== pl.id) return;
+        this.audio.leap();
+        this.goal(this.goals.push({ type: "leap" }));
+        if (!this.leapt) {
+          this.leapt = true;
+          this.juice.showBanner("Airborne!", "Leap at dancing mayflies to snap them", "good", 2000);
+        }
+        return;
+      case "splash":
+        if (e.pikeId !== pl.id) return;
+        this.audio.splash();
+        this.juice.shake(5, 0.25);
         return;
       case "angler-arrive":
         this.audio.warning();

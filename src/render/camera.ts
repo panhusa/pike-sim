@@ -58,6 +58,7 @@ export class CameraRig {
   private camYaw = 0;
   private cineAngle = 0;
   private init = false;
+  private ceil = -0.12;
 
   constructor(private cam: THREE.PerspectiveCamera) {}
 
@@ -134,7 +135,10 @@ export class CameraRig {
     this.pos.lerp(this.want, 1 - Math.exp(-s.posFollow * dt));
     // keep the camera in the water column and inside the shore
     const bottom = world.bottomY(this.pos.x, this.pos.z) + 0.15;
-    this.pos.y = Math.min(-0.12, Math.max(bottom, this.pos.y));
+    // out of the water during a leap the camera may follow it up; back under as soon as it splashes in
+    const ceilWant = player.pos.y > -0.05 ? 2.5 : -0.12;
+    this.ceil += (ceilWant - this.ceil) * (1 - Math.exp(-(ceilWant > this.ceil ? 6 : 14) * dt));
+    this.pos.y = Math.min(this.ceil, Math.max(bottom, this.pos.y));
     const r = Math.hypot(this.pos.x, this.pos.z);
     const maxR = world.size / 2 - 1;
     if (r > maxR) {

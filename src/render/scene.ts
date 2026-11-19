@@ -5,6 +5,7 @@ import type { Vec3 } from "../sim/math";
 import type { Simulation } from "../sim/simulation";
 import { CameraRig } from "./camera";
 import { seededRng, type RenderCtx } from "./ctx";
+import { buildAbove } from "./above";
 import { buildExtras } from "./extras";
 import { buildFish } from "./fish";
 import { DEFAULT_GFX, type GfxSettings } from "./gfxSettings";
@@ -29,6 +30,7 @@ export class PikeScene {
   private fish: ReturnType<typeof buildFish>;
   private particles: ReturnType<typeof buildParticles>;
   private extras: ReturnType<typeof buildExtras>;
+  private above: ReturnType<typeof buildAbove>;
   private water: ReturnType<typeof buildWater>;
   private terrain: Part;
   private plants: Part & { padSpots: Array<[number, number]> };
@@ -49,7 +51,8 @@ export class PikeScene {
     this.terrain = buildTerrain(this.ctx);
     this.plants = buildPlants(this.ctx);
     this.extras = buildExtras(this.ctx);
-    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras];
+    this.above = buildAbove(this.ctx);
+    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras, this.above];
     this.resize();
     window.addEventListener("resize", this.onResize);
   }
@@ -70,7 +73,7 @@ export class PikeScene {
     this.plants.dispose();
     this.terrain = buildTerrain(this.ctx);
     this.plants = buildPlants(this.ctx);
-    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras];
+    this.parts = [this.terrain, this.plants, this.water, this.fish, this.particles, this.extras, this.above];
   }
 
   private onResize = (): void => this.resize();
@@ -124,6 +127,13 @@ export class PikeScene {
     this.water.update(env, this.rig.position.y);
     this.particles.update(timeS, dt, this.rig.position);
     this.extras.update(timeS);
+    const inAir = this.rig.position.y > 0;
+    this.above.update(timeS, dt, this.rig.position.y);
+    const far = inAir ? 420 : 120;
+    if (this.camera.far !== far) {
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }
