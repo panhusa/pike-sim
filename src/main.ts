@@ -547,7 +547,7 @@ async function joinGame(name: string, rawCode: string): Promise<void> {
   if (!code) throw new Error("A lake code is 5 letters and digits");
   const t = await joinRoom(code).catch((e: unknown) => {
     console.warn("join failed", e);
-    throw new Error(e instanceof Error && /code/.test(e.message) ? e.message : "Could not reach that lake. Check the code and your connection.");
+    throw new Error(e instanceof Error && /code/.test(e.message) ? e.message : "Could not reach that lake. Check the code, and that the host still has the game open.");
   });
   let guest: NetGuest;
   try {

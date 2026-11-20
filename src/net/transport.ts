@@ -4,6 +4,7 @@
  * A small interface so tests can swap in a loopback.
  */
 import { ROOM_PREFIX } from "./protocol";
+import { peerConfig, relayOnlyFromUrl } from "./ice";
 
 export interface HostTransport {
   onJoin(cb: (peer: string) => void): void;
@@ -44,7 +45,7 @@ function withTimeout<T>(p: Promise<T>, what: string): Promise<T> {
 /** Open a room as host. Rejects if the code is taken or the broker is unreachable. */
 export async function hostRoom(code: string): Promise<HostTransport> {
   const { Peer } = await loadPeer();
-  const peer: Peer = new Peer(ROOM_PREFIX + code, { debug: 0 });
+  const peer: Peer = new Peer(ROOM_PREFIX + code, { debug: 0, config: peerConfig(relayOnlyFromUrl()) });
   await withTimeout(
     new Promise<void>((resolve, reject) => {
       peer.once("open", () => resolve());
@@ -83,7 +84,7 @@ export async function hostRoom(code: string): Promise<HostTransport> {
 /** Join a room by code. */
 export async function joinRoom(code: string): Promise<GuestTransport> {
   const { Peer } = await loadPeer();
-  const peer: Peer = new Peer({ debug: 0 });
+  const peer: Peer = new Peer({ debug: 0, config: peerConfig(relayOnlyFromUrl()) });
   await withTimeout(
     new Promise<void>((resolve, reject) => {
       peer.once("open", () => resolve());
