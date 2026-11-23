@@ -7,7 +7,7 @@
 import * as THREE from "three";
 import { ANATOMY, FIN } from "../fishModel";
 
-export type FishSpecies = "pike" | "perch" | "roach" | "rudd";
+export type FishSpecies = "pike" | "perch" | "roach" | "rudd" | "bream" | "tench";
 
 export interface SkinSpec {
   back: string;
@@ -101,6 +101,40 @@ export const SKINS: Record<FishSpecies, SkinSpec> = {
     rough: 0.3,
     lateralSag: 0.06,
     sheen: 0.45,
+  },
+  bream: {
+    back: "#3b3a2c",
+    flank: "#a98a4a",
+    belly: "#d9c88f",
+    fins: ["#4a4a44", "#4a4a44", "#5a554a", "#3f3f3a", "#6a604a", "#5a554a"],
+    iris: "#c9b25a",
+    pattern: "none",
+    patternColor: "#000000",
+    patternCount: 0,
+    scalesAlong: 38,
+    scalesAround: 20,
+    scaleContrast: 0.7,
+    metal: 0.55,
+    rough: 0.3,
+    lateralSag: 0.05,
+    sheen: 0.4,
+  },
+  tench: {
+    back: "#24301a",
+    flank: "#5d6a2c",
+    belly: "#9c9a58",
+    fins: ["#344020", "#344020", "#3a4624", "#2e3a1c", "#46512a", "#46512a"],
+    iris: "#c0261c",
+    pattern: "none",
+    patternColor: "#000000",
+    patternCount: 0,
+    scalesAlong: 90,
+    scalesAround: 26,
+    scaleContrast: 0.15,
+    metal: 0.05,
+    rough: 0.55,
+    lateralSag: 0,
+    sheen: 0.12,
   },
 };
 

@@ -116,6 +116,19 @@ export class Minimap {
       g.fillStyle = "#fff";
       g.fillRect(X(a.boat.x) - 3, Z(a.boat.z) - 3, 6, 6);
     }
+    const ot = sim.extras.otter;
+    if (sim.arcade && ot) {
+      dot(ot.pos.x, ot.pos.z, 3.2, "#000");
+      dot(ot.pos.x, ot.pos.z, 2.4, "#b07a45");
+    }
+    const hr = sim.extras.heron;
+    if (sim.arcade && hr && !hr.struck) {
+      g.strokeStyle = "rgba(220,220,220,.9)";
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.arc(X(hr.x), Z(hr.z), 4, 0, Math.PI * 2);
+      g.stroke();
+    }
     // you: an arrow along your heading
     const hx = Math.cos(pl.yaw);
     const hz = Math.sin(pl.yaw);

@@ -43,3 +43,22 @@ export function autoQuality(s: GfxSettings, avgFps: number): GfxSettings {
 export function initialGfx(stored: GfxSettings, coarsePointer: boolean): GfxSettings {
   return coarsePointer && !stored.qualityChosen ? { ...stored, quality: "low" } : stored;
 }
+
+/**
+ * Shader variants to compile before the first play frame: only what the current quality draws. High draws the scene
+ * into the post chain's target and Low straight to the canvas, which three.js compiles as different programs.
+ */
+export function warmTargets(s: GfxSettings): { post: boolean; screen: boolean } {
+  const high = s.quality === "high";
+  return { post: high, screen: !high };
+}
+
+/** While the automatic drop to Low is still possible, Low's canvas variants are compiled in the background after play starts. */
+export function backgroundWarm(s: GfxSettings): boolean {
+  return s.quality === "high" && !s.qualityChosen;
+}
+
+/** A prewarm stage may still run: the scene is alive and play has not already started without it (timeout). */
+export function warmMayContinue(state: { disposed: boolean; abandoned: boolean }): boolean {
+  return !state.disposed && !state.abandoned;
+}

@@ -3,11 +3,12 @@
  * and streams snapshots: pike as small objects, prey packed into an ArrayBuffer (~16 bytes each).
  * Everything received is validated: a malformed or hostile message is dropped, never trusted.
  */
-import type { Angler, Insect, InsectKind, LureState } from "../sim/extras";
+import type { Angler, Frog, Heron, Insect, InsectKind, LureState, Otter } from "../sim/extras";
 import type { PreyKind } from "../sim/params";
 import type { SimEvent } from "../sim/simulation";
 
-export const PROTOCOL_VERSION = 1;
+/** Bump when the wire format changes (2: bream/tench prey kinds, tyrant/heron/otter events and extras). */
+export const PROTOCOL_VERSION = 2;
 export const MAX_PLAYERS = 6;
 export const SNAPSHOT_HZ = 15;
 export const INPUT_HZ = 20;
@@ -122,9 +123,19 @@ export interface AnglerSnap {
   escape: number;
   hookedT: number;
 }
+/** Frogs: [id, x, y, z, vx, vz, dived]. */
+export type FrogSnap = [number, number, number, number, number, number, number];
+/** Heron: [id, targetId, t, x, z, aimX, aimZ, struck, hit]. */
+export type HeronSnap = [number, number, number, number, number, number, number, number, number];
+/** Otter: [id, targetId, x, y, z, yaw, leaving]. */
+export type OtterSnap = [number, number, number, number, number, number, number];
 export interface ExtrasSnap {
   insects: InsectSnap[];
+  frogs?: FrogSnap[];
   angler: AnglerSnap | null;
+  /** optional: older hosts send neither */
+  heron?: HeronSnap | null;
+  otter?: OtterSnap | null;
 }
 export interface SnapMsg {
   t: "snap";
@@ -140,8 +151,11 @@ const LURE_STATES: LureState[] = ["cast", "sink", "retrieve", "hooked", "gone"];
 const PHASES: Angler["phase"][] = ["arrive", "fish", "leave"];
 const r2 = (v: number): number => Math.round(v * 100) / 100;
 
-export function packExtras(insects: readonly Insect[], a: Angler | null): ExtrasSnap {
+export function packExtras(insects: readonly Insect[], a: Angler | null, frogs: readonly Frog[] = [], heron: Heron | null = null, otter: Otter | null = null): ExtrasSnap {
   return {
+    heron: heron && [heron.id, heron.targetId, r2(heron.t), r2(heron.x), r2(heron.z), r2(heron.aimX), r2(heron.aimZ), heron.struck ? 1 : 0, heron.hit ? 1 : 0],
+    otter: otter && [otter.id, otter.targetId, r2(otter.pos.x), r2(otter.pos.y), r2(otter.pos.z), r2(otter.yaw), otter.outcome ? 1 : 0],
+    frogs: frogs.slice(0, 16).map((f) => [f.id, r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r2(f.vel.x), r2(f.vel.z), f.diveT > 0 ? 1 : 0]),
     insects: insects.slice(0, 64).map((f) => [f.id, INSECT_KINDS.indexOf(f.kind), r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), f.aloft ? 1 : 0]),
     angler: a && {
       bx: r2(a.boat.x),
@@ -157,7 +171,7 @@ export function packExtras(insects: readonly Insect[], a: Angler | null): Extras
 }
 
 /** Validate and rebuild extras state for the guest mirror. */
-export function unpackExtras(raw: unknown): { insects: Insect[]; angler: Angler | null } | null {
+export function unpackExtras(raw: unknown): { insects: Insect[]; frogs: Frog[]; angler: Angler | null; heron: Heron | null; otter: Otter | null } | null {
   if (!isObj(raw) || !Array.isArray(raw.insects)) return null;
   const n = (v: unknown, lo = -1e4, hi = 1e4) => num(v, lo, hi) ?? 0;
   const insects: Insect[] = raw.insects
@@ -167,6 +181,17 @@ export function unpackExtras(raw: unknown): { insects: Insect[]; angler: Angler 
       const kind = INSECT_KINDS[n(f[1], 0, 99)] ?? "fly";
       return { id: n(f[0], 0, 1e9), kind, pos: { x: n(f[2]), y: n(f[3], -1, 2), z: n(f[4]) }, vel: { x: 0, y: 0, z: 0 }, life: 10, grams: 1, aloft: f[5] === 1 };
     });
+  const frogs: Frog[] = (Array.isArray(raw.frogs) ? raw.frogs : [])
+    .slice(0, 16)
+    .filter((f): f is unknown[] => Array.isArray(f) && f.length === 7)
+    .map((f) => ({
+      id: n(f[0], 0, 1e9),
+      pos: { x: n(f[1]), y: n(f[2], -2, 2), z: n(f[3]) },
+      vel: { x: n(f[4], -5, 5), y: 0, z: n(f[5], -5, 5) },
+      kickT: 1,
+      alive: true,
+      diveT: f[6] === 1 ? 1 : 0,
+    }));
   let angler: Angler | null = null;
   const a = raw.angler;
   if (isObj(a) && Array.isArray(a.lure) && a.lure.length === 8) {
@@ -184,7 +209,18 @@ export function unpackExtras(raw: unknown): { insects: Insect[]; angler: Angler 
       hookedT: n(a.hookedT, 0, 1e5),
     };
   }
-  return { insects, angler };
+  let heron: Heron | null = null;
+  if (Array.isArray(raw.heron) && raw.heron.length === 9) {
+    const h = raw.heron as unknown[];
+    heron = { id: n(h[0], 0, 1e9), targetId: n(h[1], 0, 1e9), t: n(h[2], 0, 100), x: n(h[3]), z: n(h[4]), aimX: n(h[5]), aimZ: n(h[6]), struck: h[7] === 1, hit: h[8] === 1 };
+  }
+  let otter: Otter | null = null;
+  if (Array.isArray(raw.otter) && raw.otter.length === 7) {
+    const o = raw.otter as unknown[];
+    const pos = { x: n(o[2]), y: n(o[3], -100, 5), z: n(o[4]) };
+    otter = { id: n(o[0], 0, 1e9), targetId: n(o[1], 0, 1e9), pos, yaw: n(o[5], -100, 100), t: 0, lastSeen: { ...pos }, lostS: 0, home: { ...pos }, outcome: o[6] === 1 ? "timeout" : null };
+  }
+  return { insects, frogs, angler, heron, otter };
 }
 export interface EventsMsg {
   t: "ev";
@@ -196,11 +232,13 @@ export interface YouMsg {
 }
 export interface FullMsg {
   t: "full";
+  /** why the host turned us away; absent from hosts before protocol 2 */
+  reason?: "players" | "version";
 }
 export type HostMsg = WelcomeMsg | SnapMsg | EventsMsg | YouMsg | FullMsg;
 
 // ---- prey packing: id u32, kind u8, alive u8, len u16 (mm), pos 3 x i16 (cm), vel 3 x i16 (mm/s) = 20 bytes ----
-export const PREY_KINDS: PreyKind[] = ["roach", "perch", "rudd"];
+export const PREY_KINDS: PreyKind[] = ["roach", "perch", "rudd", "bream", "tench"];
 const PREY_BYTES = 20;
 
 export interface PreyLite {
@@ -262,7 +300,7 @@ function parsePikeSnap(v: unknown): PikeSnap | null {
   return { id: id!, x: x!, y: y!, z: z!, yaw: yaw!, pitch: pitch!, speed: speed!, len: len!, weight: weight!, alive: v.alive === true, health: health!, energy: energy!, stomach: stomach!, age: age!, burst: burst!, sex: v.sex === "male" ? "male" : "female", human: v.human === true };
 }
 
-const EVENT_TYPES = new Set(["strike", "capture", "miss", "strike-empty", "death", "bitten", "hunter-start", "hunter-end", "milestone", "hooked", "unhooked", "released", "angler-arrive", "angler-leave"]);
+const EVENT_TYPES = new Set(["strike", "capture", "miss", "strike-empty", "death", "bitten", "scared", "hunter-start", "hunter-end", "tyrant-start", "tyrant-hit", "tyrant-end", "milestone", "hooked", "unhooked", "released", "angler-arrive", "angler-leave", "heron-warn", "heron-stab", "heron-dodged", "otter-start", "otter-lost", "otter-end"]);
 
 export function parseHostMsg(raw: unknown): HostMsg | null {
   if (!isObj(raw)) return null;
@@ -289,7 +327,7 @@ export function parseHostMsg(raw: unknown): HostMsg | null {
       return pikeId === null ? null : { t: "you", pikeId };
     }
     case "full":
-      return { t: "full" };
+      return raw.reason === "players" || raw.reason === "version" ? { t: "full", reason: raw.reason } : { t: "full" };
     default:
       return null;
   }

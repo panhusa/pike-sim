@@ -3,9 +3,11 @@
  * lure. Stepped by Simulation only when `sim.arcade`, with their own RNG stream, so the realistic
  * model and its calibration are untouched. Only human players can take insects or strike the lure.
  */
-import { clamp, forward, Rng, type Vec3, v3 } from "./math";
+import { clamp, dist, forward, Rng, type Vec3, v3 } from "./math";
+import { HUNTER, playerHidden, type HideRule } from "./hunter";
 import type { PikeState } from "./pike";
 import type { Simulation } from "./simulation";
+import { closestOnBody } from "./tyrant";
 
 export type InsectKind = "fly" | "beetle" | "mayfly";
 export interface Insect {
@@ -18,6 +20,17 @@ export interface Insect {
   grams: number;
   /** mayflies dance above the water: only a leaping pike reaches them */
   aloft: boolean;
+}
+
+/** A frog sitting on the surface in the shallows. `diveT` > 0: it is under water (out of reach) for that many more seconds. */
+export interface Frog {
+  id: number;
+  pos: Vec3;
+  vel: Vec3;
+  /** seconds until the next kick */
+  kickT: number;
+  alive: boolean;
+  diveT: number;
 }
 
 export type LureState = "cast" | "sink" | "retrieve" | "hooked" | "gone";
@@ -47,6 +60,19 @@ export interface Angler {
 }
 
 export const INSECT = { target: 12, life: [25, 60] as [number, number], grams: { fly: 0.6, beetle: 1.5, mayfly: 0.9 }, mayflyFrac: 0.3 };
+export const FROG = {
+  target: 5,
+  maxDepthM: 1.5,
+  kickEveryS: [0.8, 1.6] as [number, number],
+  kickSpeed: 0.35,
+  diveRangeM: 0.6,
+  diveDepthM: 0.4,
+  resurfaceS: 4,
+  grams: 30,
+  lengthCm: 7,
+  /** gape: a smaller pike cannot swallow one */
+  minPikeCm: 14,
+};
 export const ANGLER = {
   firstS: 200,
   gapS: [150, 240] as [number, number],
@@ -67,24 +93,97 @@ export const ANGLER = {
 
 export const LURE_LENGTH_CM = 11;
 
+/** A heron wading the shallows: its shadow follows a human in shallow water, then it stabs where the fish was 0.3 s before. */
+export const HERON = { minCm: 4, maxCm: 60, shallowM: 1.2, everyS: [70, 120] as [number, number], warnS: 2.0, hitR: 0.45 };
+/** An otter: comes in from the nearest shore and chases one human; hides like from a hunter. */
+export const OTTER = { minCm: 10, maxCm: 70, everyS: [200, 320] as [number, number], speedMS: 1.6, durationS: 18, hideStillS: 1.2, hideMinCover: 0.35, searchS: 4, biteR: 0.4 };
+/** Neither predator comes before this much play (seconds the human has been alive in this sim). */
+export const PREDATOR_MIN_PLAY_S = 60;
+/** the stab aims where the fish was this long before it lands */
+const HERON_AIM_LEAD_S = 0.3;
+/** the heron stays on screen this long after its stab (beak back up, splash) */
+const HERON_LINGER_S = 0.8;
+/** a hidden fish: the otter circles its last seen spot this far out, at this share of its speed */
+const OTTER_SEARCH_R = HUNTER.noticeRangeM + 1;
+const OTTER_SEARCH_PACE = 0.6;
+/** a leaving otter is gone after this long even if it never reaches the bank */
+const OTTER_LEAVE_S = 10;
+const OTTER_HIDE: HideRule = { hideStillS: OTTER.hideStillS, hideMinCover: OTTER.hideMinCover, noticeRangeM: HUNTER.noticeRangeM };
+
+export interface Heron {
+  id: number;
+  targetId: number;
+  /** seconds since the warning */
+  t: number;
+  /** its shadow on the surface */
+  x: number;
+  z: number;
+  /** where the beak will land */
+  aimX: number;
+  aimZ: number;
+  struck: boolean;
+  hit: boolean;
+}
+
+export interface Otter {
+  id: number;
+  targetId: number;
+  pos: Vec3;
+  yaw: number;
+  t: number;
+  lastSeen: Vec3;
+  /** seconds the target has been hidden from it */
+  lostS: number;
+  /** the bank it came from and goes back to */
+  home: Vec3;
+  /** set once: then it swims home */
+  /** "interrupted": a hunter or the tyrant took over */
+  outcome: null | "bit" | "lost" | "timeout" | "gone" | "interrupted";
+}
+
 export type ExtraEvent =
   | { type: "angler-arrive"; t: number }
   | { type: "angler-leave"; t: number }
   | { type: "hooked"; pikeId: number; t: number }
   | { type: "unhooked"; pikeId: number; t: number }
-  | { type: "released"; pikeId: number; health: number; t: number };
+  | { type: "released"; pikeId: number; health: number; t: number }
+  | { type: "heron-warn"; pikeId: number; heronId: number; x: number; z: number; t: number }
+  | { type: "heron-stab"; pikeId: number; x: number; z: number; hit: boolean; t: number }
+  | { type: "heron-dodged"; pikeId: number; t: number }
+  | { type: "otter-start"; pikeId: number; otterId: number; t: number }
+  | { type: "otter-lost"; pikeId: number; t: number }
+  | { type: "otter-end"; pikeId: number; outcome: NonNullable<Otter["outcome"]>; t: number };
 
 export class Extras {
   insects: Insect[] = [];
+  frogs: Frog[] = [];
   angler: Angler | null = null;
+  heron: Heron | null = null;
+  otter: Otter | null = null;
+  /** Seconds each living human has played (alive in this sim), by pike id. Transient. */
+  readonly playS = new Map<number, number>();
+  /** Seconds of eligible play until the next heron / otter. */
+  heronIn: number;
+  otterIn: number;
   private rng: Rng;
+  /** frogs draw from their own stream, so adding them never shifts the insects or the fisherman */
+  private frogRng: Rng;
+  private frogId = 20_000_000;
+  /** herons and otters draw from their own stream too */
+  private predRng: Rng;
+  private predId = 30_000_000;
   private nextId = 10_000_000;
   /** seconds until the next fisherman */
   anglerIn = ANGLER.firstS;
   private spawnAcc = 0;
+  private frogAcc = 0;
 
   constructor(seed: number) {
     this.rng = new Rng((seed ^ 0x5bd1e995) >>> 0);
+    this.frogRng = new Rng((seed ^ 0x2f6b4d1) >>> 0);
+    this.predRng = new Rng((seed ^ 0x6a09e667) >>> 0);
+    this.heronIn = this.predRng.range(HERON.everyS[0], HERON.everyS[1]);
+    this.otterIn = this.predRng.range(OTTER.everyS[0], OTTER.everyS[1]);
   }
 
   /** Any point inside the water body, away from the shore. */
@@ -100,7 +199,9 @@ export class Extras {
 
   step(sim: Simulation, dt: number): void {
     this.stepInsects(sim, dt);
+    this.stepFrogs(sim, dt);
     this.stepAngler(sim, dt);
+    this.stepPredators(sim, dt);
   }
 
   // ---------------- insects ----------------
@@ -171,7 +272,252 @@ export class Extras {
     return null;
   }
 
+  // ---------------- frogs ----------------
+  private stepFrogs(sim: Simulation, dt: number): void {
+    const w = sim.world;
+    // none in cold water; they sit in the shallows near the weeds
+    this.frogAcc += dt;
+    if (this.frogs.length < FROG.target && sim.env.tempC >= 8 && this.frogAcc > 3) {
+      this.frogAcc = 0;
+      const f = this.spawnFrog(sim);
+      if (f) this.frogs.push(f);
+    }
+    for (const f of this.frogs) {
+      if (f.diveT > 0) {
+        f.diveT -= dt;
+        if (f.diveT <= 0) f.pos.y = -0.02; // back on the surface
+        continue;
+      }
+      // a pike creeping close sends it under; a lunge is too quick for it to react
+      const scared = sim.pikes.some((k) => k.alive && k.burstTimeLeft <= 0 && Math.hypot(k.pos.x - f.pos.x, k.pos.y - f.pos.y, k.pos.z - f.pos.z) < FROG.diveRangeM);
+      if (scared) {
+        f.diveT = FROG.resurfaceS;
+        f.pos.y = -FROG.diveDepthM;
+        f.vel = v3();
+        continue;
+      }
+      f.kickT -= dt;
+      if (f.kickT <= 0) {
+        f.kickT = this.frogRng.range(FROG.kickEveryS[0], FROG.kickEveryS[1]);
+        const a = this.frogRng.range(0, Math.PI * 2);
+        f.vel = v3(Math.cos(a) * FROG.kickSpeed, 0, Math.sin(a) * FROG.kickSpeed);
+      }
+      const nx = f.pos.x + f.vel.x * dt;
+      const nz = f.pos.z + f.vel.z * dt;
+      if (w.inWater(nx, nz) && w.depthAt(nx, nz) < FROG.maxDepthM) {
+        f.pos.x = nx;
+        f.pos.z = nz;
+      } else f.vel = v3();
+      f.vel = v3(f.vel.x * (1 - Math.min(1, dt * 3)), 0, f.vel.z * (1 - Math.min(1, dt * 3))); // the glide dies away between kicks
+    }
+  }
+
+  private spawnFrog(sim: Simulation): Frog | null {
+    const w = sim.world;
+    const beds = w.weeds;
+    for (let i = 0; i < 40; i++) {
+      let x: number;
+      let z: number;
+      if (beds.length && i < 30) {
+        const b = beds[Math.floor(this.frogRng.next() * beds.length)]!;
+        const a = this.frogRng.range(0, Math.PI * 2);
+        const r = b.radius * this.frogRng.range(0.3, 1.4);
+        x = b.x + Math.cos(a) * r;
+        z = b.z + Math.sin(a) * r;
+      } else {
+        x = this.frogRng.range(-w.size / 2, w.size / 2);
+        z = this.frogRng.range(-w.size / 2, w.size / 2);
+      }
+      if (!w.inWater(x, z) || w.depthAt(x, z) >= FROG.maxDepthM) continue;
+      return { id: this.frogId++, pos: v3(x, -0.02, z), vel: v3(), kickT: this.frogRng.range(FROG.kickEveryS[0], FROG.kickEveryS[1]), alive: true, diveT: 0 };
+    }
+    return null;
+  }
+
+  /** The pike's mouth reaches a frog sitting on the surface (not one that dived): take it. */
+  eatFrogAt(mouth: Vec3, reach: number): Frog | null {
+    for (const f of this.frogs) {
+      if (f.diveT > 0) continue;
+      if (Math.hypot(f.pos.x - mouth.x, f.pos.y - mouth.y, f.pos.z - mouth.z) > reach) continue;
+      f.alive = false;
+      this.frogs = this.frogs.filter((x) => x !== f);
+      return f;
+    }
+    return null;
+  }
+
+  // ---------------- heron and otter ----------------
+  private humans(sim: Simulation): PikeState[] {
+    return sim.pikes.filter((k) => k.alive && sim.isHuman(k));
+  }
+
+  private stepPredators(sim: Simulation, dt: number): void {
+    const humans = this.humans(sim);
+    for (const id of [...this.playS.keys()]) if (!humans.some((k) => k.id === id)) this.playS.delete(id);
+    for (const k of humans) this.playS.set(k.id, (this.playS.get(k.id) ?? 0) + dt);
+    if (this.heron) this.stepHeron(sim, dt);
+    if (this.otter) this.stepOtter(sim, dt);
+    // the clocks only run while nothing else is after anyone
+    if (sim.hunter || sim.tyrant || this.heron || this.otter) return;
+    const ready = (k: PikeState) => (this.playS.get(k.id) ?? 0) >= PREDATOR_MIN_PLAY_S;
+    const wading = humans.filter((k) => this.heronFits(sim, k));
+    if (wading.length) {
+      this.heronIn -= dt;
+      const ok = wading.filter(ready);
+      if (this.heronIn <= 0 && ok.length) {
+        this.startHeron(sim, ok[Math.floor(this.predRng.next() * ok.length)]!.id);
+        return;
+      }
+    }
+    const prey = humans.filter((k) => k.lengthCm >= OTTER.minCm && k.lengthCm <= OTTER.maxCm);
+    if (prey.length) {
+      this.otterIn -= dt;
+      const ok = prey.filter(ready);
+      if (this.otterIn <= 0 && ok.length) this.startOtter(sim, ok[Math.floor(this.predRng.next() * ok.length)]!.id);
+    }
+  }
+
+  private heronFits(sim: Simulation, k: PikeState): boolean {
+    return k.lengthCm >= HERON.minCm && k.lengthCm <= HERON.maxCm && sim.world.depthAt(k.pos.x, k.pos.z) < HERON.shallowM;
+  }
+
+  /** A heron spots a human in the shallows: the warning starts now (game only; no clock or play-time check). */
+  startHeron(sim: Simulation, targetId: number): boolean {
+    const pl = sim.pikes.find((k) => k.id === targetId);
+    if (!sim.arcade || this.heron || this.otter || sim.hunter || sim.tyrant || !pl || !pl.alive || !sim.isHuman(pl) || !this.heronFits(sim, pl)) return false;
+    this.heron = { id: this.predId++, targetId, t: 0, x: pl.pos.x, z: pl.pos.z, aimX: pl.pos.x, aimZ: pl.pos.z, struck: false, hit: false };
+    sim.events.push({ type: "heron-warn", pikeId: targetId, heronId: this.heron.id, x: pl.pos.x, z: pl.pos.z, t: sim.time } as never);
+    return true;
+  }
+
+  private stepHeron(sim: Simulation, dt: number): void {
+    const h = this.heron!;
+    h.t += dt;
+    const pl = sim.pikes.find((k) => k.id === h.targetId);
+    if (h.struck) {
+      if (h.t >= HERON.warnS + HERON_LINGER_S) this.endHeron();
+      return;
+    }
+    if (!pl || !pl.alive || sim.hunter || sim.tyrant) return this.endHeron(); // another threat took over: it flies off
+    // the shadow drifts after the fish; the aim freezes just before the stab
+    const k = Math.min(1, dt * 3);
+    h.x += (pl.pos.x - h.x) * k;
+    h.z += (pl.pos.z - h.z) * k;
+    if (h.t < HERON.warnS - HERON_AIM_LEAD_S) [h.aimX, h.aimZ] = [pl.pos.x, pl.pos.z];
+    if (h.t < HERON.warnS) return;
+    h.struck = true;
+    h.hit = Math.hypot(pl.pos.x - h.aimX, pl.pos.z - h.aimZ) < HERON.hitR;
+    sim.events.push({ type: "heron-stab", pikeId: pl.id, x: h.aimX, z: h.aimZ, hit: h.hit, t: sim.time } as never);
+    if (h.hit) sim.hurtPlayer(pl, "heron", h.id);
+    else sim.events.push({ type: "heron-dodged", pikeId: pl.id, t: sim.time } as never);
+  }
+
+  /** A hunter or the tyrant is starting: a heron that has not struck flies off, a chasing otter leaves. */
+  interrupt(sim: Simulation): void {
+    if (this.heron && !this.heron.struck) this.endHeron();
+    if (this.otter && !this.otter.outcome) this.endOtter(sim, "interrupted");
+  }
+
+  private endHeron(): void {
+    this.heron = null;
+    this.heronIn = this.predRng.range(HERON.everyS[0], HERON.everyS[1]);
+  }
+
+  /** The nearest bank point to `p`, stepped back into the water. Deterministic. */
+  private shoreNear(sim: Simulation, p: Vec3): Vec3 {
+    const w = sim.world;
+    let best: Vec3 | null = null;
+    let bestD = Infinity;
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      for (let r = 0.5; r < Math.min(bestD, 40); r += 0.5) {
+        if (w.inWater(p.x + Math.cos(a) * r, p.z + Math.sin(a) * r)) continue;
+        const back = Math.max(0, r - 1);
+        best = v3(p.x + Math.cos(a) * back, -0.2, p.z + Math.sin(a) * back);
+        bestD = r;
+        break;
+      }
+    }
+    if (!best) best = v3(p.x - 15, -0.2, p.z); // far from any bank: it swam over from somewhere
+    w.confine(best, 0.1);
+    return best;
+  }
+
+  /** An otter slips in from the nearest bank after this human (game only; no clock or play-time check). */
+  startOtter(sim: Simulation, targetId: number): boolean {
+    const pl = sim.pikes.find((k) => k.id === targetId);
+    if (!sim.arcade || this.otter || this.heron || sim.hunter || sim.tyrant || !pl || !pl.alive || !sim.isHuman(pl) || pl.lengthCm < OTTER.minCm || pl.lengthCm > OTTER.maxCm) return false;
+    const home = this.shoreNear(sim, pl.pos);
+    this.otter = { id: this.predId++, targetId, pos: { ...home }, yaw: Math.atan2(pl.pos.z - home.z, pl.pos.x - home.x), t: 0, lastSeen: { ...pl.pos }, lostS: 0, home, outcome: null };
+    sim.events.push({ type: "otter-start", pikeId: targetId, otterId: this.otter.id, t: sim.time } as never);
+    return true;
+  }
+
+  private endOtter(sim: Simulation, outcome: NonNullable<Otter["outcome"]>): void {
+    const o = this.otter!;
+    o.outcome = outcome;
+    o.t = 0;
+    if (outcome === "lost") sim.events.push({ type: "otter-lost", pikeId: o.targetId, t: sim.time } as never);
+    sim.events.push({ type: "otter-end", pikeId: o.targetId, outcome, t: sim.time } as never);
+  }
+
+  private swimTo(sim: Simulation, o: Otter, to: Vec3, speed: number, dt: number): number {
+    const dx = to.x - o.pos.x;
+    const dy = to.y - o.pos.y;
+    const dz = to.z - o.pos.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d > 1e-3) {
+      const s = Math.min(d, speed * dt);
+      o.pos.x += (dx / d) * s;
+      o.pos.y += (dy / d) * s;
+      o.pos.z += (dz / d) * s;
+      if (Math.hypot(dx, dz) > 1e-3) o.yaw = Math.atan2(dz, dx);
+    }
+    o.pos.y = Math.min(o.pos.y, -0.1);
+    sim.world.confine(o.pos, 0.1);
+    return d;
+  }
+
+  private stepOtter(sim: Simulation, dt: number): void {
+    const o = this.otter!;
+    o.t += dt;
+    if (o.outcome) {
+      if (this.swimTo(sim, o, o.home, OTTER.speedMS, dt) < 0.5 || o.t >= OTTER_LEAVE_S) {
+        this.otter = null;
+        this.otterIn = this.predRng.range(OTTER.everyS[0], OTTER.everyS[1]);
+      }
+      return;
+    }
+    const pl = sim.pikes.find((k) => k.id === o.targetId);
+    if (!pl || !pl.alive) return this.endOtter(sim, "gone");
+    if (sim.hunter || sim.tyrant) return this.endOtter(sim, "interrupted");
+    if (o.t >= OTTER.durationS) return this.endOtter(sim, "timeout");
+    // same hidden rule as the hunter (still, in cover, not right next to it)
+    if (playerHidden(sim, o, pl, OTTER_HIDE)) o.lostS += dt;
+    else {
+      o.lostS = 0;
+      o.lastSeen = { ...pl.pos };
+    }
+    if (o.lostS >= OTTER.searchS) return this.endOtter(sim, "lost");
+    if (o.lostS > 0) {
+      // circle the spot where it lost the fish
+      const a = Math.atan2(o.pos.z - o.lastSeen.z, o.pos.x - o.lastSeen.x) + 0.6;
+      this.swimTo(sim, o, v3(o.lastSeen.x + Math.cos(a) * OTTER_SEARCH_R, o.lastSeen.y, o.lastSeen.z + Math.sin(a) * OTTER_SEARCH_R), OTTER.speedMS * OTTER_SEARCH_PACE, dt);
+      return;
+    }
+    this.swimTo(sim, o, pl.pos, OTTER.speedMS, dt);
+    if (dist(closestOnBody(pl, o.pos), o.pos) < OTTER.biteR) {
+      sim.hurtPlayer(pl, "otter", o.id);
+      this.endOtter(sim, "bit");
+    }
+  }
+
   // ---------------- fisherman ----------------
+  /** The next angler arrives within `inS` seconds (no effect while one is already here). */
+  summonAngler(inS: number): void {
+    if (!this.angler) this.anglerIn = Math.min(this.anglerIn, inS);
+  }
+
   private stepAngler(sim: Simulation, dt: number): void {
     const a = this.angler;
     if (!a) {
@@ -380,6 +726,6 @@ export class Extras {
   find(id: number): { pos: Vec3 } | undefined {
     const L = this.lureLive();
     if (L && L.id === id) return L;
-    return this.insects.find((f) => f.id === id);
+    return this.insects.find((f) => f.id === id) ?? this.frogs.find((f) => f.id === id);
   }
 }

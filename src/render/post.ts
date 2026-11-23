@@ -9,6 +9,8 @@ import type { GfxQuality } from "./gfxSettings";
 import { gradeFragment, gradeVertex } from "./shaders/grade.glsl";
 
 export interface PostChain {
+  /** the target the scene is drawn into (shaders are compiled against it ahead of play) */
+  readonly sceneTarget: THREE.WebGLRenderTarget;
   /** `underwater` turns the shimmer warp on. */
   render(dt: number, underwater: boolean): void;
   resize(w: number, h: number, pixelRatio: number): void;
@@ -55,6 +57,7 @@ export function buildPost(ctx: RenderCtx): PostChain {
   composer.addPass(grade);
   composer.addPass(output);
   return {
+    sceneTarget: target,
     render(dt, underwater) {
       grade.uniforms.uWarp!.value = underwater ? 0.0015 : 0;
       composer.render(dt);

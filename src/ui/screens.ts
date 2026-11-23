@@ -3,8 +3,8 @@ import type { LifeSummary } from "../sim/lifecycle";
 import type { DangerPreset, DeathMode } from "../sim/settings";
 import type { MapShape } from "../sim/world";
 import type { Simulation } from "../sim/simulation";
+import type { SlotNo, SlotSummary } from "./slots";
 
-const SEASONS = { winter: "Winter", spring: "Spring", summer: "Summer", autumn: "Autumn" } as const;
 const MODE_LABEL: Record<DeathMode, string> = {
   permadeath: "Permadeath: one life, then the save is erased",
   lineage: "Lineage: continue as your offspring",
@@ -23,14 +23,33 @@ export interface NewLifeConfig {
   chill: boolean;
   /** growth speed multiplier (the Growth option) */
   growthMul: number;
-  /** start as an egg (grow through every stage) instead of the 22 cm young pike */
+  /** start as a hatchling larva (grow through every stage) instead of a later stage */
   startEgg: boolean;
+  /** the later "Start as" stage's length (absent with startEgg) */
+  startCm?: number;
+  /** which save slot of the chosen water this life goes into */
+  slot: SlotNo;
 }
+
+const START_AS: [string, string][] = [
+  ["egg", "Larva (hatch at 1.2 cm)"],
+  ["22", "Young pike (22 cm)"],
+  ["30", "Jack (30 cm)"],
+  ["40", "Hunter (40 cm)"],
+  ["55", "Predator (55 cm)"],
+  ["74", "Almost a Lake tyrant (74 cm)"],
+];
 
 function startSelect(): HTMLSelectElement {
   const sel = h("select", {});
-  sel.append(h("option", { value: "egg", textContent: "Egg: hatch at 1 cm and grow through every stage" }), h("option", { value: "young", textContent: "Young pike (22 cm)" }));
+  for (const [v, l] of START_AS) sel.append(h("option", { value: v, textContent: l }));
   return sel;
+}
+
+/** "Start as" value to settings: the larva keeps startEgg, every later stage is a start length. */
+export function startChoice(value: string): { startEgg: boolean; startCm?: number } {
+  const cm = Number(value);
+  return value === "egg" || !Number.isFinite(cm) ? { startEgg: true } : { startEgg: false, startCm: cm };
 }
 
 function growthSelect(): HTMLSelectElement {
@@ -101,7 +120,8 @@ function mouseRow(m: MousePref): HTMLElement {
   return h("div", {}, h("label", {}, box, " Invert mouse (push forward to dive, pull back to rise)"), h("label", {}, "Mouse sensitivity ", sens, " ", val));
 }
 
-export type SaveSlot = { kind: "none" } | { kind: "ok"; sim: Simulation } | { kind: "bad"; text: string };
+const WATER_NAME: Record<MapShape, string> = { lake: "Lake", river: "River" };
+const slotName = (s: { map: MapShape; n: number }): string => `${WATER_NAME[s.map]} ${s.n}`;
 
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const el = Object.assign(document.createElement(tag), props);
@@ -119,6 +139,11 @@ function mount(root: HTMLElement, ...kids: Node[]): void {
   root.replaceChildren(h("div", {}, ...kids));
   root.style.display = "flex";
 }
+/** Shown while a life's scene is built and its shaders compile (a second or two on a slow machine). */
+export function showLoading(root: HTMLElement): void {
+  mount(root, h("h1", { textContent: "Filling the lake…" }));
+}
+
 export function hideOverlay(root: HTMLElement): void {
   root.style.display = "none";
   root.replaceChildren();
@@ -135,7 +160,7 @@ export function lifeLine(sim: Simulation): string {
   return `${pk.sex === "male" ? "Male" : "Female"} pike, ${pk.lengthCm.toFixed(1)} cm, ${pk.ageDays.toFixed(0)} days old`;
 }
 
-function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, defaultSeed?: number): HTMLElement {
+function newLifeForm(onNew: (c: NewLifeConfig) => void, slots: SlotSummary[], defaultSeed?: number): HTMLElement {
   const mode = h("select", {});
   for (const m of Object.keys(MODE_LABEL) as DeathMode[]) mode.append(h("option", { value: m, textContent: MODE_LABEL[m] }));
   const preset = h("select", {});
@@ -159,11 +184,26 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
   const play = playSelect();
   const growth = growthSelect();
   const start = startSelect();
+  const slotSel = h("select", {});
+  const slotsOf = (): SlotSummary[] => slots.filter((x) => x.map === (map.value === "river" ? "river" : "lake"));
+  const fillSlots = (): void => {
+    const list = slotsOf();
+    slotSel.replaceChildren(
+      ...list.map((x) =>
+        h("option", { value: String(x.n), textContent: `${x.n} ${x.empty ? (x.corrupt ? "(unreadable save)" : "(empty)") : `(replaces ${x.stage} ${Math.round(x.lengthCm!)} cm)`}` }),
+      ),
+    );
+    slotSel.value = String((list.find((x) => x.empty && !x.corrupt) ?? list[0])?.n ?? 1);
+  };
+  fillSlots();
+  map.addEventListener("change", fillSlots);
   const danger = h("div", {}, h("label", {}, "Death mode ", mode), h("label", {}, "Danger ", preset), custom);
   danger.style.display = "none";
   play.addEventListener("change", () => (danger.style.display = play.value === "chill" ? "none" : "block"));
   const go = button("Start a new life", () => {
-    if (confirmFirst && !confirm("This replaces your saved pike, which could not be loaded. Continue?")) return;
+    const target = slotsOf().find((x) => String(x.n) === slotSel.value);
+    if (target?.corrupt && !confirm(`This replaces the unreadable save in ${slotName(target)}. Continue?`)) return;
+    if (target && !target.empty && !confirm(`This replaces your ${target.stage} (${Math.round(target.lengthCm!)} cm) in ${slotName(target)}. Continue?`)) return;
     onNew({
       deathMode: mode.value as DeathMode,
       preset: preset.value as NewLifeConfig["preset"],
@@ -174,16 +214,17 @@ function newLifeForm(onNew: (c: NewLifeConfig) => void, confirmFirst: boolean, d
       map: map.value === "river" ? "river" : "lake",
       chill: play.value === "chill",
       growthMul: Number(growth.value) || 1,
-      startEgg: start.value === "egg",
+      ...startChoice(start.value),
+      slot: (Number(slotSel.value) || 1) as SlotNo,
     });
   });
-  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), h("label", {}, "Start as ", start), h("label", {}, "Growth ", growth), danger, h("label", {}, "Seed ", seed), go);
+  return h("div", { className: "form" }, h("label", {}, "Play ", play), h("label", {}, "Water ", map), h("label", {}, "Slot ", slotSel), h("label", {}, "Start as ", start), h("label", {}, "Growth ", growth), danger, h("label", {}, "Seed ", seed), go);
 }
 
 export interface OnlineHandlers {
   name: string;
   /** resolves when the lake is open; rejects with a readable message */
-  onHost(name: string, map: MapShape, chill: boolean, growthMul: number, startEgg: boolean): Promise<void>;
+  onHost(name: string, map: MapShape, chill: boolean, growthMul: number, start: { startEgg: boolean; startCm?: number }): Promise<void>;
   onJoin(name: string, code: string): Promise<void>;
 }
 
@@ -209,7 +250,7 @@ function onlineCard(o: OnlineHandlers): HTMLElement {
   const hostStart = startSelect();
   const hostBtn = button("Host", () => {
     busy(true, "Opening a lake…");
-    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked, Number(hostGrowth.value) || 1, hostStart.value === "egg").catch(fail);
+    o.onHost(name.value, hostMap.value === "river" ? "river" : "lake", hostChill.checked, Number(hostGrowth.value) || 1, startChoice(hostStart.value)).catch(fail);
   });
   const joinBtn = button(
     "Join",
@@ -240,8 +281,11 @@ export function showOnlineDeath(root: HTMLElement, cause: string, score: number,
 
 export interface StartHandlers {
   online?: OnlineHandlers;
-  onContinue(sim: Simulation): void;
+  /** continue a filled slot (its sim is parsed) */
+  onContinue(slot: SlotSummary & { sim: Simulation }): void;
   onNew(c: NewLifeConfig): void;
+  /** erase a slot (already confirmed); the caller re-opens the menu */
+  onDelete(slot: SlotSummary): void;
   onDownload(text: string): void;
   controls?: ControlsPref; // touch devices only
   mouse?: MousePref; // desktop only
@@ -255,7 +299,30 @@ function padSetupRow(open: () => void): HTMLElement {
   return h("div", {}, b);
 }
 
-export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: boolean, hd: StartHandlers, defaultSeed?: number): void {
+function slotRow(x: SlotSummary, hd: StartHandlers): HTMLElement {
+  const row = h("div", { className: "slotRow" });
+  const sim = x.sim;
+  if (x.empty || !sim) {
+    row.append(h("span", { textContent: `${slotName(x)}: ${x.corrupt ? "Empty (unreadable save)" : "Empty"}` }));
+    if (x.corrupt && x.text !== undefined) row.append(button("Download", () => hd.onDownload(x.text!), "secondary"));
+    return row;
+  }
+  const mode = (sim.settings.chill ? "chill" : sim.settings.deathMode) + (sim.player()?.alive === false ? " · dead" : "");
+  row.append(
+    h("span", { textContent: `${slotName(x)}: ${x.stage}, ${x.lengthCm!.toFixed(1)} cm, ${Math.round(x.ageDays!)} days · ${mode}` }),
+    button("Continue", () => hd.onContinue({ ...x, sim })),
+    button(
+      "Delete",
+      () => {
+        if (confirm(`Delete your ${x.stage} (${Math.round(x.lengthCm!)} cm) in ${slotName(x)}? This cannot be undone.`)) hd.onDelete(x);
+      },
+      "secondary",
+    ),
+  );
+  return row;
+}
+
+export function showStart(root: HTMLElement, slots: SlotSummary[], storageAvailable: boolean, hd: StartHandlers, defaultSeed?: number): void {
   const kids: Node[] = [
     h("h1", { textContent: "Pike" }),
     p("You are a young northern pike in a lake or a river. Hunt, grow, leap after mayflies, and become the apex predator."),
@@ -270,21 +337,9 @@ export function showStart(root: HTMLElement, slot: SaveSlot, storageAvailable: b
   if (hd.gfx) kids.push(graphicsRow(hd.gfx));
   if (hd.padSetup) kids.push(padSetupRow(hd.padSetup));
   if (!storageAvailable) kids.push(p("Progress will not be saved in this browser", "warn"));
-  if (slot.kind === "ok") {
-    const s = slot.sim;
-    kids.push(
-      h("div", { className: "card" },
-        h("b", { textContent: "Saved pike" }),
-        p(lifeLine(s)),
-        p(`${SEASONS[s.env.season]}, day ${s.env.dayOfYear} · ${s.settings.deathMode}`),
-        button("Continue", () => hd.onContinue(s)),
-      ),
-    );
-  } else if (slot.kind === "bad") {
-    kids.push(h("div", { className: "card" }, p("Your saved pike could not be loaded", "warn"), button("Download save file", () => hd.onDownload(slot.text), "secondary")));
-  }
+  if (storageAvailable) kids.push(h("div", { className: "card slots" }, h("b", { textContent: "Saved lives" }), ...slots.map((x) => slotRow(x, hd))));
   if (hd.online) kids.push(onlineCard(hd.online));
-  kids.push(h("h2", { textContent: "New life" }), newLifeForm(hd.onNew, slot.kind === "bad", defaultSeed));
+  kids.push(h("h2", { textContent: "New life" }), newLifeForm(hd.onNew, slots, defaultSeed));
   mount(root, ...kids);
 }
 
@@ -301,7 +356,8 @@ export function showDeath(
   extra: { rewindDay: number | null; offspringLiving: number; offspringCohorts: number; noOffspring: boolean },
   hd: DeathHandlers,
 ): void {
-  const cause = s.cause === "eaten" ? `Eaten by a ${Math.round(s.byLengthCm ?? 0)} cm pike` : s.cause === "caught" ? "Caught by an angler" : "Starved";
+  const cause =
+    s.cause === "eaten" ? `Eaten by a ${Math.round(s.byLengthCm ?? 0)} cm pike` : s.cause === "caught" ? "Caught by an angler" : s.cause === "heron" ? "Speared by a heron" : s.cause === "otter" ? "Caught by an otter" : "Starved";
   const kids: Node[] = [
     h("h1", { textContent: "Your pike died" }),
     p(cause),

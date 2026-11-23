@@ -39,15 +39,15 @@ describe("stages", () => {
 });
 
 describe("Challenges", () => {
-  it("Chill never asks for goals that need a hunting pike", () => {
+  it("Chill keeps the survive goal (hunters chase there too), and it fits any size", () => {
     const c = new Challenges({ chill: true });
     const seen = new Set<string>();
-    for (let i = 0; i < CHALLENGES.length * 2; i++) {
+    for (let i = 0; i < CHALLENGES.length; i++) {
       seen.add(c.current.id);
-      expect(c.current.danger).toBeUndefined();
       c.index++;
     }
-    expect(seen.has("survive")).toBe(false);
+    expect(seen.has("survive")).toBe(true);
+    expect(CHALLENGES.find((d) => d.id === "survive")!.minPikeCm).toBeUndefined();
     expect(new Challenges().current.id).toBe(CHALLENGES[0]!.id);
   });
 
@@ -68,12 +68,27 @@ describe("Challenges", () => {
 });
 
 describe("DangerClock", () => {
-  it("fires after the first delay and pauses during a hunt", () => {
-    const d = new DangerClock(() => 0);
-    expect(d.tick(DANGER.FIRST_S - 1, false)).toBe(false);
-    expect(d.tick(5, true)).toBe(false);
-    expect(d.tick(1, false)).toBe(true);
-    expect(d.left).toBe(DANGER.GAP_MIN_S);
+  it("fires first at 45 s for a small fish, 90 s for a grown one, and pauses during a hunt", () => {
+    const small = new DangerClock(() => 0);
+    expect(small.tick(44, false, 5)).toBe(false);
+    expect(small.tick(5, true, 5)).toBe(false);
+    expect(small.tick(1, false, 5)).toBe(true);
+    expect(small.left).toBe(DANGER.GAP_SMALL_MIN_S);
+    const big = new DangerClock(() => 1);
+    expect(big.tick(89, false, 30)).toBe(false);
+    expect(big.tick(1, false, 30)).toBe(true);
+    expect(big.left).toBe(DANGER.GAP_GROWN_MAX_S);
+  });
+  it("hunterWithin brings the next hunter forward, never back", () => {
+    const c = new DangerClock(() => 0);
+    c.hunterWithin(10);
+    expect(c.left).toBe(10); // before the first tick
+    c.left = 4;
+    c.hunterWithin(10);
+    expect(c.left).toBe(4); // a hunter due sooner keeps its time
+    c.left = 70;
+    c.hunterWithin(10);
+    expect(c.left).toBe(10);
   });
 });
 

@@ -33,6 +33,11 @@ export class Score {
     return { points, mult };
   }
 
+  /** Lose the current streak (being scared off). */
+  breakCombo(): void {
+    this.combo = 0;
+  }
+
   bonus(points: number): void {
     this.points += points;
   }

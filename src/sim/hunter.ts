@@ -18,7 +18,7 @@ export interface Hunter {
   /** seconds the player has been hidden from it */
   lostS: number;
   /** how it ended, set once */
-  outcome: null | "escaped" | "timeout" | "bit-player" | "ate-player" | "hunter-died";
+  outcome: null | "escaped" | "timeout" | "bit-player" | "scared-player" | "ate-player" | "hunter-died";
 }
 
 export const HUNTER = {
@@ -37,9 +37,16 @@ export function hunterMinLength(sim: Simulation, player: PikeState): number {
   return (player.lengthCm / sim.p.pike.maxPreyLengthFracOfBL) * HUNTER.sizeMargin;
 }
 
-export function playerHidden(sim: Simulation, hunter: PikeState, player: PikeState): boolean {
-  const d = Math.hypot(player.pos.x - hunter.pos.x, player.pos.y - hunter.pos.y, player.pos.z - hunter.pos.z);
-  return player.stillTime >= HUNTER.hideStillS && sim.world.coverAt(player.pos) >= HUNTER.hideMinCover && d > HUNTER.noticeRangeM;
+export interface HideRule {
+  hideStillS: number;
+  hideMinCover: number;
+  noticeRangeM: number;
+}
+
+/** The player is hidden from a seeker: still long enough, in cover, and not right next to it. */
+export function playerHidden(sim: Simulation, seeker: { pos: Vec3 }, player: PikeState, rule: HideRule = HUNTER): boolean {
+  const d = Math.hypot(player.pos.x - seeker.pos.x, player.pos.y - seeker.pos.y, player.pos.z - seeker.pos.z);
+  return player.stillTime >= rule.hideStillS && sim.world.coverAt(player.pos) >= rule.hideMinCover && d > rule.noticeRangeM;
 }
 
 /** Full-speed chase toward the player (or its last seen spot), bursting when the player is lungeable. */

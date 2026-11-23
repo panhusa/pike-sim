@@ -17,9 +17,13 @@ interface Guest {
   pendingBurst: boolean;
 }
 
-const forGuest = (e: SimEvent, pikeId: number): boolean =>
+/** `tyrantTarget`: whom the active tyrant is after (its hits go to that guest only). */
+const forGuest = (e: SimEvent, pikeId: number, tyrantTarget: number | null): boolean =>
   e.type === "angler-arrive" ||
   e.type === "angler-leave" ||
+  e.type === "tyrant-start" || // everyone learns which pike is the boss (its marker); the session filters banners by target
+  e.type === "tyrant-end" ||
+  (e.type === "tyrant-hit" && tyrantTarget === pikeId) ||
   ("pikeId" in e && e.pikeId === pikeId) || ((e.type === "hunter-start" || e.type === "hunter-end") && e.targetId === pikeId);
 
 export class NetHost {
@@ -60,7 +64,7 @@ export class NetHost {
     if (m.t === "hello") {
       if (g) return;
       if (this.playerCount >= MAX_PLAYERS || m.v !== PROTOCOL_VERSION) {
-        this.net.send(peer, { t: "full" });
+        this.net.send(peer, { t: "full", reason: m.v !== PROTOCOL_VERSION ? "version" : "players" });
         setTimeout(() => this.net.kick(peer), 500);
         return;
       }
@@ -124,7 +128,7 @@ export class NetHost {
     if (fresh.length) {
       for (const [peer, g] of this.guests) {
         if (g.pikeId === null) continue;
-        const mine = fresh.filter((e) => forGuest(e, g.pikeId!));
+        const mine = fresh.filter((e) => forGuest(e, g.pikeId!, this.sim.tyrant?.targetId ?? null));
         if (mine.length) this.net.send(peer, { t: "ev", events: mine });
       }
     }
@@ -152,7 +156,7 @@ export class NetHost {
         sex: k.sex,
         human: this.sim.isHuman(k),
       }));
-    this.net.broadcast({ t: "snap", time: this.sim.time, pikes, prey: packPrey(this.sim.prey), players: this.players(), extras: packExtras(this.sim.extras.insects, this.sim.extras.angler) });
+    this.net.broadcast({ t: "snap", time: this.sim.time, pikes, prey: packPrey(this.sim.prey), players: this.players(), extras: packExtras(this.sim.extras.insects, this.sim.extras.angler, this.sim.extras.frogs, this.sim.extras.heron, this.sim.extras.otter) });
   }
 
   close(): void {

@@ -154,6 +154,19 @@ export class GameAudio {
     this.swoosh(1800, 300, 0.3, 0.5, 2);
   }
 
+  /** A heron's beak spearing the water. */
+  stab(): void {
+    this.swoosh(4000, 900, 0.35, 0.6, 2.5);
+    this.tone(220, 0.15, 0.4, "sine", 70, 0.02);
+  }
+
+  /** An otter's whistle: two rising chirps. */
+  otterWarning(): void {
+    this.tone(1300, 0.12, 0.18, "triangle", 1900);
+    this.tone(1400, 0.14, 0.18, "triangle", 2100, 0.18);
+    this.tone(220, 0.4, 0.2, "sawtooth", 110, 0.05);
+  }
+
   warning(): void {
     this.tone(220, 0.5, 0.3, "sawtooth", 110);
     this.tone(233, 0.5, 0.2, "sawtooth", 116, 0.02);

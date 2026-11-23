@@ -20,6 +20,8 @@ export interface SimSettings {
   growthMul?: number;
   /** game only: humans start as an egg (hatch at EGG_LENGTH_CM) instead of the 22 cm young pike */
   startEgg?: boolean;
+  /** game only: a later "Start as" stage, the humans' start length in cm (ignored when startEgg). Absent: 22 cm */
+  startCm?: number;
 }
 
 export function presetSettings(preset: DangerPreset, deathMode: DeathMode, p: Params): SimSettings {

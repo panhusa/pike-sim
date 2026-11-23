@@ -8,11 +8,12 @@ export interface SaveStore {
   clearRewind(): boolean;
 }
 
-const KEY = "pike.save.v1";
-const REWIND_KEY = "pike.save.v1.rewind";
+/** the single save from before save slots (migrated into a slot at start-up, see slots.ts) */
+export const LEGACY_KEY = "pike.save.v1";
+export const LEGACY_REWIND_KEY = "pike.save.v1.rewind";
 
-/** localStorage-backed save slots; every access is guarded because storage can be missing, blocked or full. */
-export function createSaveStore(storage: Storage | null): SaveStore {
+/** localStorage-backed save and rewind snapshot under two keys; every access is guarded because storage can be missing, blocked or full. */
+export function createSaveStore(storage: Storage | null, key = LEGACY_KEY, rewindKey = LEGACY_REWIND_KEY): SaveStore {
   const read = (k: string): string | null => {
     try {
       return storage?.getItem(k) ?? null;
@@ -39,12 +40,12 @@ export function createSaveStore(storage: Storage | null): SaveStore {
   };
   return {
     available: storage !== null,
-    load: () => read(KEY),
-    save: (t) => write(KEY, t),
-    loadRewind: () => read(REWIND_KEY),
-    saveRewind: (t) => write(REWIND_KEY, t),
-    clear: () => remove(KEY) && remove(REWIND_KEY),
-    clearRewind: () => remove(REWIND_KEY),
+    load: () => read(key),
+    save: (t) => write(key, t),
+    loadRewind: () => read(rewindKey),
+    saveRewind: (t) => write(rewindKey, t),
+    clear: () => remove(key) && remove(rewindKey),
+    clearRewind: () => remove(rewindKey),
   };
 }
 
@@ -52,7 +53,7 @@ export function createSaveStore(storage: Storage | null): SaveStore {
 export function browserStorage(): Storage | null {
   try {
     const s = window.localStorage;
-    s.getItem(KEY);
+    s.getItem(LEGACY_KEY);
     return s;
   } catch {
     return null;

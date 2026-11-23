@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GFX, autoQuality, initialGfx, loadGfx, saveGfx, type GfxSettings } from "../src/render/gfxSettings";
+import { DEFAULT_GFX, autoQuality, initialGfx, loadGfx, saveGfx, warmTargets, backgroundWarm, warmMayContinue, type GfxSettings } from "../src/render/gfxSettings";
 import { CAMERA_MODES, CameraRig, chaseDistance, type CameraMode } from "../src/render/camera";
 import { absorptionColor, causticStrength, waterLook } from "../src/render/water";
 import { nearFade, plantCounts } from "../src/render/plants";
@@ -12,6 +12,18 @@ import { burstsFromEvents, particleCounts } from "../src/render/particles";
 import type { SimEvent } from "../src/sim/simulation";
 import { gradeFor, pixelRatioFor } from "../src/render/post";
 import { shaftCount } from "../src/render/water";
+import { buildShafts, buildWater, createWaterUniforms } from "../src/render/water";
+import { CULL_STEP, GridCull, InstanceCull, fogCullRadius, trianglesOf } from "../src/render/cull";
+import { FISH_LOD_NEAR_M, buildFish, fishLod } from "../src/render/fish";
+import { buildPlants } from "../src/render/plants";
+import { buildTerrain } from "../src/render/terrain";
+import { buildExtras } from "../src/render/extras";
+import { setOutlinesVisible } from "../src/render/outline";
+import { seededRng, type RenderCtx } from "../src/render/ctx";
+import { Simulation, placePlayerNearPrey } from "../src/sim/simulation";
+import { presetSettings } from "../src/sim/settings";
+import { placeInWeedBed, startLengthCm } from "../src/sim/nursery";
+import type { MapShape } from "../src/sim/world";
 
 const memStorage = (init: Record<string, string> = {}): Storage => {
   const m = new Map(Object.entries(init));
@@ -178,11 +190,11 @@ describe("fish model v2 and skins", () => {
   };
   it("has finite attributes for every species and detail level", () => {
     for (const s of species)
-      for (const d of [DETAIL.low, DETAIL.high, DETAIL.hero]) {
+      for (const d of [DETAIL.far, DETAIL.low, DETAIL.high, DETAIL.hero]) {
         const g = buildFishModel(s, d);
         for (const name of ["position", "aUV", "aPart", "aFin"]) {
-          const arr = g.getAttribute(name).array;
-          for (let i = 0; i < arr.length; i++) expect(Number.isFinite(arr[i])).toBe(true);
+          const arr = Array.from(g.getAttribute(name).array as ArrayLike<number>);
+          expect(arr.every(Number.isFinite), `${s} ${name}`).toBe(true); // one expect per array: per-element expects made this the slowest test
         }
         expect(g.getAttribute("aUV").count).toBe(g.getAttribute("position").count);
       }
@@ -222,8 +234,8 @@ describe("fish model v2 and skins", () => {
     expect(depth("pike")).toBeLessThan(0.14);
     expect(depth("perch")).toBeGreaterThan(0.19);
   });
-  it("SKINS: four species, pike spots pale on olive, perch bars, silver roach", () => {
-    expect(Object.keys(SKINS).sort()).toEqual(["perch", "pike", "roach", "rudd"]);
+  it("SKINS: six species, pike spots pale on olive, perch bars, silver roach", () => {
+    expect(Object.keys(SKINS).sort()).toEqual(["bream", "perch", "pike", "roach", "rudd", "tench"]);
     expect(SKINS.pike.pattern).toBe("spots");
     expect(SKINS.perch.pattern).toBe("bars");
     const lum = (hex: string) => new THREE.Color(hex).getHSL({ h: 0, s: 0, l: 0 }).l;
@@ -368,4 +380,183 @@ describe("stylised style", () => {
   it("stylised grade is more saturated than realistic", () => {
     expect(gradeFor("stylised").saturation).toBeGreaterThan(gradeFor("realistic").saturation);
   });
+});
+
+describe("warmTargets", () => {
+  it("compiles only what the current quality draws before play", () => {
+    expect(warmTargets(DEFAULT_GFX)).toEqual({ post: true, screen: false });
+    expect(warmTargets({ ...DEFAULT_GFX, qualityChosen: true })).toEqual({ post: true, screen: false });
+    expect(warmTargets({ ...DEFAULT_GFX, quality: "low", qualityChosen: true })).toEqual({ post: false, screen: true });
+  });
+  it("warms Low in the background only while the automatic drop is armed", () => {
+    expect(backgroundWarm(DEFAULT_GFX)).toBe(true);
+    expect(backgroundWarm({ ...DEFAULT_GFX, qualityChosen: true })).toBe(false);
+    expect(backgroundWarm({ ...DEFAULT_GFX, quality: "low" })).toBe(false);
+  });
+});
+
+describe("warmMayContinue", () => {
+  it("stops a late prewarm once the scene is disposed or play started without it", () => {
+    expect(warmMayContinue({ disposed: false, abandoned: false })).toBe(true);
+    expect(warmMayContinue({ disposed: true, abandoned: false })).toBe(false);
+    expect(warmMayContinue({ disposed: false, abandoned: true })).toBe(false);
+  });
+});
+
+describe("fog culling", () => {
+  it("fogCullRadius leaves under 0.5 % of an object's colour past it, and nothing is culled in the air", () => {
+    for (const vis of [1, 2.5, 4.2, 9]) {
+      const r = fogCullRadius(vis, false);
+      const density = 2.2 / Math.max(vis, 1.5); // waterLook
+      expect(Math.exp(-density * r)).toBeLessThanOrEqual(0.005 + 1e-9);
+    }
+    expect(fogCullRadius(9, true)).toBe(Infinity);
+  });
+  it("InstanceCull keeps every instance within reach, packs them first and restores all for Infinity", () => {
+    const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial(), 100);
+    const mat = new THREE.Matrix4();
+    for (let i = 0; i < 100; i++) m.setMatrixAt(i, mat.makeTranslation(i, 0, 0)); // x = 0..99
+    const c = new InstanceCull(m, 0.5);
+    c.update({ x: 50, z: 0, radius: 10 });
+    const kept = new Set<number>();
+    for (let i = 0; i < m.count; i++) kept.add((m.getMatrixAt(i, mat), mat.elements[12]));
+    for (let x = 0; x < 100; x++) expect(kept.has(x)).toBe(Math.abs(x - 50) <= 10 + 0.5 + CULL_STEP);
+    c.update({ x: 50, z: 0, radius: Infinity });
+    expect(m.count).toBe(100);
+    m.getMatrixAt(99, mat);
+    expect(mat.elements[12]).toBe(99);
+  });
+  it("InstanceCull stays correct across repeated finite repacks (matrices and colours), then restores all", () => {
+    const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial(), 100);
+    const mat = new THREE.Matrix4();
+    const col = new THREE.Color();
+    for (let i = 0; i < 100; i++) {
+      m.setMatrixAt(i, mat.makeTranslation(i, 0, 0));
+      m.setColorAt(i, col.setRGB(i / 100, 0.25, 0.5));
+    }
+    const c = new InstanceCull(m, 0.5);
+    const check = (cx: number, r: number): void => {
+      c.update({ x: cx, z: 0, radius: r });
+      const got: number[] = [];
+      for (let i = 0; i < m.count; i++) {
+        m.getMatrixAt(i, mat);
+        m.getColorAt(i, col);
+        got.push(mat.elements[12]!);
+        expect(col.r).toBeCloseTo(mat.elements[12]! / 100, 5);
+      }
+      const want: number[] = [];
+      for (let x = 0; x < 100; x++) if (Math.abs(x - cx) <= r + 0.5 + CULL_STEP) want.push(x);
+      expect(got.sort((a, b) => a - b)).toEqual(want);
+    };
+    check(80, 3);
+    check(0, 3);
+    check(40, 3);
+    check(0, 3);
+    c.update({ x: 0, z: 0, radius: Infinity });
+    expect(m.count).toBe(100);
+    for (let i = 0; i < 100; i++) {
+      m.getMatrixAt(i, mat);
+      m.getColorAt(i, col);
+      expect(mat.elements[12]).toBe(i);
+      expect(col.r).toBeCloseTo(i / 100, 5);
+    }
+  });
+  it("GridCull keeps the cells around the camera and all of them for Infinity", () => {
+    const g = new THREE.PlaneGeometry(100, 100, 50, 50).rotateX(-Math.PI / 2);
+    const c = new GridCull(g, 100, 50);
+    const pos = g.attributes.position!;
+    const idx = g.index!;
+    const camX = 20;
+    const camZ = -30; // off-centre and asymmetric, so a flipped row order would show
+    c.update({ x: camX, z: camZ, radius: 10 });
+    let dx = 0;
+    let dz = 0;
+    for (let i = 0; i < g.drawRange.count; i++) {
+      dx = Math.max(dx, Math.abs(pos.getX(idx.getX(i)) - camX));
+      dz = Math.max(dz, Math.abs(pos.getZ(idx.getX(i)) - camZ));
+    }
+    for (const d of [dx, dz]) {
+      expect(d).toBeGreaterThanOrEqual(10 + CULL_STEP);
+      expect(d).toBeLessThan(18);
+    }
+    c.update({ x: 0, z: 0, radius: Infinity });
+    expect(g.drawRange.count).toBe(50 * 50 * 6);
+  });
+  it("fishLod: full model up close, coarse farther, none past the fog radius", () => {
+    const view = { x: 0, y: -1, z: 0, radius: 10 };
+    expect(fishLod({ x: 1, y: -1, z: 0 }, 10, view)).toBe("near");
+    expect(fishLod({ x: FISH_LOD_NEAR_M + 1, y: -1, z: 0 }, 10, view)).toBe("far");
+    expect(fishLod({ x: 12, y: -1, z: 0 }, 10, view)).toBe(null);
+    expect(fishLod({ x: 50, y: -1, z: 0 }, 10, undefined)).toBe("near");
+  });
+});
+
+/**
+ * The scene a player starts in, built without WebGL: water, terrain, plants, fish and extras around the
+ * player's start spot, culled for the camera there. The sky, land and trees are hidden under water and
+ * particles are points, so they add no triangles.
+ */
+function startTriangles(map: MapShape, quality: GfxSettings["quality"], startEgg: boolean, seed: number, visibilityM?: number, style: GfxSettings["style"] = "realistic"): { total: number; parts: Map<string, number> } {
+  const settings = { ...presetSettings("natural", "permadeath", defaultParams), map, chill: true, big: true, growthMul: 1, startEgg, ...(startEgg ? {} : { startCm: 22 }) };
+  const sim = new Simulation({ seed, settings });
+  const pl = sim.addPlayer(startLengthCm(settings, sim.p));
+  sim.arcade = true;
+  if (!(startEgg && placeInWeedBed(sim.world, pl))) placePlayerNearPrey(sim, 7, pl); // main.ts placeStart
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(65, 16 / 9, 0.05, 120);
+  setOutlinesVisible(camera, style === "stylised");
+  const gfx: GfxSettings = { style, quality, qualityChosen: true };
+  const ctx: RenderCtx = {
+    scene,
+    camera,
+    renderer: {} as THREE.WebGLRenderer,
+    sim,
+    gfx,
+    uTime: { value: 0 },
+    water: createWaterUniforms(sim.world.maxDepth),
+    rng: (salt) => seededRng(sim.seed * 2654435761 + salt),
+  };
+  const fish = buildFish(ctx, new THREE.Texture());
+  buildWater(ctx);
+  buildShafts(ctx);
+  const terrain = buildTerrain(ctx);
+  const plants = buildPlants(ctx);
+  const extras = buildExtras(ctx);
+  const rig = new CameraRig(camera);
+  for (let i = 0; i < 30; i++) rig.update(pl, { yaw: 0, pitch: 0 }, sim.world, 1 / 30);
+  const cam = rig.position;
+  const view = { x: cam.x, y: cam.y, z: cam.z, radius: fogCullRadius(visibilityM ?? sim.env.visibilityM, cam.y > 0) };
+  fish.update(pl, rig.hidesPlayer, view);
+  terrain.update(view);
+  plants.update(view);
+  extras.update(sim.time);
+  const parts = new Map<string, number>();
+  return { total: trianglesOf(scene, camera, parts), parts };
+}
+
+describe("triangle budget at the start position (no GPU)", () => {
+  const BUDGET = { high: 1.5e6, low: 0.5e6 };
+  const clearest = defaultParams.environment.visibilityClearM; // worst case: the clearest water, noon
+  for (const map of ["lake", "river"] as MapShape[]) {
+    for (const quality of ["high", "low"] as const) {
+      it(`${map} ${quality}: under ${BUDGET[quality] / 1e6} M triangles (larva and 22 cm starts, start-time and clearest water)`, () => {
+        for (const seed of [1, 2]) {
+          for (const egg of [true, false]) {
+            for (const vis of [undefined, clearest]) {
+              const { total, parts } = startTriangles(map, quality, egg, seed, vis);
+              if (total > BUDGET[quality]) console.log(map, quality, seed, egg, vis, total, [...parts].sort((a, b) => b[1] - a[1]).slice(0, 6));
+              expect(total).toBeLessThanOrEqual(BUDGET[quality]);
+            }
+          }
+        }
+      }, 60000);
+    }
+  }
+  it("stylised outlines stay inside the budget too (clearest water)", () => {
+    for (const map of ["lake", "river"] as MapShape[]) {
+      for (const quality of ["high", "low"] as const) {
+        expect(startTriangles(map, quality, true, 1, clearest, "stylised").total).toBeLessThanOrEqual(BUDGET[quality]);
+      }
+    }
+  }, 60000);
 });

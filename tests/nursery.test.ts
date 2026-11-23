@@ -3,7 +3,7 @@ import { Simulation } from "../src/sim/simulation";
 import { presetSettings } from "../src/sim/settings";
 import { defaultParams } from "../src/sim/params";
 import { weightG } from "../src/sim/biology";
-import { EGG_LENGTH_CM, NURSERY_END_CM, nurseryGrow, placeInWeedBed, startLengthCm } from "../src/sim/nursery";
+import { EGG_LENGTH_CM, NURSERY_END_CM, ARCADE_GAIN, arcadeGain, gameGrow, nurseryGrow, placeInWeedBed, startLengthCm, yolkFrac } from "../src/sim/nursery";
 import { Challenges } from "../src/game/challenges";
 
 const eggSettings = (growthMul = 1) => ({ ...presetSettings("gentle", "permadeath", defaultParams), chill: true, big: true, startEgg: true, growthMul });
@@ -12,6 +12,11 @@ describe("egg start and nursery growth", () => {
   it("starts at the hatchling length only when asked", () => {
     expect(startLengthCm(eggSettings(), defaultParams)).toBe(EGG_LENGTH_CM);
     expect(startLengthCm({}, defaultParams)).toBe(defaultParams.pike.startLengthCm);
+  });
+
+  it("a later 'Start as' stage starts at its length; the larva wins over startCm", () => {
+    expect(startLengthCm({ startCm: 40 }, defaultParams)).toBe(40);
+    expect(startLengthCm({ startEgg: true, startCm: 40 }, defaultParams)).toBe(EGG_LENGTH_CM);
   });
 
   it("each catch grows a nursery pike, faster with the Growth option, capped at the nursery end", () => {
@@ -27,6 +32,13 @@ describe("egg start and nursery growth", () => {
     nurseryGrow(a, 10, 8, sim.p);
     expect(a.lengthCm).toBe(NURSERY_END_CM);
     expect(nurseryGrow(a, 10, 8, sim.p)).toBe(false); // the biology model takes over
+  });
+
+  it("yolkFrac: full at hatching, linear to nothing at 2.5 cm", () => {
+    expect(yolkFrac(1.2)).toBe(1);
+    expect(yolkFrac(2.5)).toBe(0);
+    expect(yolkFrac(1.85)).toBeCloseTo(0.5, 2);
+    expect(yolkFrac(10)).toBe(0);
   });
 
   it("puts the egg in a shallow weed bed", () => {
@@ -71,5 +83,27 @@ describe("egg start and nursery growth", () => {
       expect(c.current.minPikeCm ?? 0).toBeLessThanOrEqual(2);
       c.index++;
     }
+  });
+
+  it("arcadeGain: scales with prey size, tapers above 50 cm, Growth multiplies", () => {
+    expect(arcadeGain(30, 12)).toBeCloseTo(ARCADE_GAIN, 6);
+    expect(arcadeGain(100, 40)).toBeCloseTo(ARCADE_GAIN / 2, 6);
+    expect(arcadeGain(30, 12, 3)).toBeCloseTo(ARCADE_GAIN * 3, 6);
+  });
+
+  it("gameGrow: nursery behaviour under 22 cm, multiplicative length gain above, stomach untouched", () => {
+    const sim = new Simulation({ seed: 3, settings: eggSettings() });
+    const big = sim.addPlayer(30);
+    big.stomachG = 5;
+    gameGrow(big, 12, 1, sim.p);
+    expect(big.lengthCm).toBeCloseTo(30 * (1 + ARCADE_GAIN), 6);
+    expect(big.weight).toBeCloseTo(weightG(big.lengthCm, sim.p.pike.lengthWeight), 9);
+    expect(big.stomachG).toBe(5);
+    const a = sim.addPlayer(10);
+    const b = sim.addPlayer(10);
+    nurseryGrow(a, 4, 1, sim.p);
+    gameGrow(b, 4, 1, sim.p);
+    expect(b.lengthCm).toBe(a.lengthCm);
+    expect(b.weight).toBe(a.weight);
   });
 });

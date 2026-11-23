@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SimEvent } from "../src/sim/simulation";
-import { BurstOutcomes } from "../src/ui/outcome";
+import { BurstOutcomes, catchText } from "../src/ui/outcome";
 
 const strike = (lockId: number | null): SimEvent => ({ type: "strike", pikeId: 1, lockId, t: 0 });
 const miss = (preyId: number, reason: "evaded" | "too-big" | "off-axis"): SimEvent => ({ type: "miss", pikeId: 1, preyId, reason, t: 0 });
@@ -49,5 +49,25 @@ describe("BurstOutcomes: one outcome line per burst", () => {
     const b = new BurstOutcomes();
     expect(b.push({ type: "bolt", preyId: 3, pikeDistance: 1, t: 0 })).toBeNull();
     expect(b.end(false)).toBeNull();
+  });
+});
+
+describe("catchText", () => {
+  it("shows a baby fish caught by a larva with a decimal, never as 0 cm (+0 g)", () => {
+    expect(catchText("rudd", 0.42, 0.0006)).toBe("Caught a rudd 0.4 cm");
+    expect(catchText("roach", 3.06, 0.31)).toBe("Caught a roach 3.1 cm (+0.3 g)");
+  });
+  it("keeps whole numbers for grown fish", () => {
+    expect(catchText("roach", 14.6, 31.4)).toBe("Caught a roach 15 cm (+31 g)");
+  });
+  it("picks the format from the rounded value at the 10 and 0.1 boundaries", () => {
+    expect(catchText("roach", 9.96, 1)).toBe("Caught a roach 10 cm (+1.0 g)");
+    expect(catchText("roach", 10, 1)).toBe("Caught a roach 10 cm (+1.0 g)");
+    expect(catchText("roach", 9.94, 1)).toBe("Caught a roach 9.9 cm (+1.0 g)");
+    expect(catchText("roach", 5, 9.96)).toBe("Caught a roach 5.0 cm (+10 g)");
+    expect(catchText("roach", 5, 10)).toBe("Caught a roach 5.0 cm (+10 g)");
+    expect(catchText("roach", 5, 0.1)).toBe("Caught a roach 5.0 cm (+0.1 g)");
+    expect(catchText("roach", 5, 0.099)).toBe("Caught a roach 5.0 cm (+0.1 g)");
+    expect(catchText("roach", 5, 0.04)).toBe("Caught a roach 5.0 cm");
   });
 });

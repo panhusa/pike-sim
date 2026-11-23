@@ -146,6 +146,18 @@ describe("host and guest", () => {
     await expect(joined(lb)).rejects.toThrow(/full/);
   });
 
+  it("protocol 2 (larva update: bream/tench, tyrant/heron/otter events and extras)", () => {
+    expect(PROTOCOL_VERSION).toBe(2);
+  });
+
+  it("a guest on another version is told to refresh, not that the lake is full", async () => {
+    const lb = loopback();
+    new NetHost(hostSim(), lb.host, "ABCDE");
+    await expect(awaitWelcome(lb.connect(), "Old", PROTOCOL_VERSION - 1)).rejects.toThrow(/another version.*[Rr]efresh/);
+    expect(parseHostMsg({ t: "full", reason: "version" })).toEqual({ t: "full", reason: "version" });
+    expect(parseHostMsg({ t: "full", reason: "junk" })).toEqual({ t: "full" });
+  });
+
   it("guest pike get the arcade tuning on the host; rivals do not", async () => {
     const lb = loopback();
     const sim = hostSim();
@@ -178,5 +190,16 @@ describe("extras snapshot", () => {
     expect(back.angler).toMatchObject({ phase: "fish", hookedId: 7, escape: 0.42, lure: { state: "hooked", id: 10000009 } });
     expect(unpackExtras({ insects: "x" })).toBeNull();
     expect(unpackExtras({ insects: [[1, 99, "a", 0, 0, 0]], angler: { lure: [1] } })).toMatchObject({ insects: [{ kind: "fly", pos: { x: 0 } }], angler: null });
+  });
+});
+
+describe("guest settings", () => {
+  const quiet: GuestTransport = { onMessage: () => undefined, onClose: () => undefined, send: () => undefined, close: () => undefined };
+  const guestWith = (settings: unknown) => new NetGuest(quiet, { t: "welcome", v: PROTOCOL_VERSION, seed: 1, startDay: 100, pikeId: 1, settings });
+  it("keeps a sane host startCm and drops a wild one", () => {
+    expect(guestWith({ startCm: 55 }).sim.settings.startCm).toBe(55);
+    expect(guestWith({ startCm: 9999 }).sim.settings.startCm).toBeUndefined();
+    expect(guestWith({ startCm: "40" }).sim.settings.startCm).toBeUndefined();
+    expect(guestWith({}).sim.settings.startCm).toBeUndefined();
   });
 });

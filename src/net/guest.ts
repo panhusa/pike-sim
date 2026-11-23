@@ -13,7 +13,7 @@ import type { SimSettings } from "../sim/settings";
 import { presetSettings } from "../sim/settings";
 import { defaultParams } from "../sim/params";
 import { Simulation } from "../sim/simulation";
-import { INPUT_HZ, parseHostMsg, unpackExtras, unpackPrey, type PikeSnap, type PlayerInfo, type WelcomeMsg } from "./protocol";
+import { INPUT_HZ, parseHostMsg, unpackExtras, unpackPrey, type PikeSnap, type PlayerInfo, type WelcomeMsg, type FullMsg } from "./protocol";
 import type { GuestTransport } from "./transport";
 
 const SNAP_ERR_M = 2.5; // own pike further off than this is snapped, not blended
@@ -32,7 +32,7 @@ function settingsFrom(raw: unknown): SimSettings {
   if (!raw || typeof raw !== "object") return base;
   const r = raw as Record<string, unknown>;
   const n = (k: keyof SimSettings) => (typeof r[k] === "number" && Number.isFinite(r[k]) ? (r[k] as number) : (base[k] as number));
-  return { ...base, rivalCount: Math.min(20, n("rivalCount")), rivalSizeScale: n("rivalSizeScale"), aggression: n("aggression"), recruitmentScale: n("recruitmentScale"), map: r.map === "river" ? "river" : "lake", chill: r.chill === true, big: r.big === true, growthMul: typeof r.growthMul === "number" && r.growthMul > 0 && r.growthMul <= 20 ? r.growthMul : 1, startEgg: r.startEgg === true };
+  return { ...base, rivalCount: Math.min(20, n("rivalCount")), rivalSizeScale: n("rivalSizeScale"), aggression: n("aggression"), recruitmentScale: n("recruitmentScale"), map: r.map === "river" ? "river" : "lake", chill: r.chill === true, big: r.big === true, growthMul: typeof r.growthMul === "number" && r.growthMul > 0 && r.growthMul <= 20 ? r.growthMul : 1, startEgg: r.startEgg === true, ...(typeof r.startCm === "number" && r.startCm >= 1 && r.startCm <= 150 ? { startCm: r.startCm } : {}) };
 }
 
 export class NetGuest {
@@ -75,10 +75,22 @@ export class NetGuest {
       const ex = unpackExtras(m.extras);
       if (ex) {
         this.sim.extras.insects = ex.insects;
+        this.sim.extras.frogs = ex.frogs;
         this.sim.extras.angler = ex.angler;
+        this.sim.extras.heron = ex.heron;
+        this.sim.extras.otter = ex.otter;
       }
     }
-    else if (m.t === "ev") for (const e of m.events) this.sim.events.push(e);
+    else if (m.t === "ev")
+      for (const e of m.events) {
+        if (e.type === "tyrant-start") this.sim.tyrantSeenId = e.tyrantId;
+        else if (e.type === "tyrant-end" && e.tyrantId === this.sim.tyrantSeenId) this.sim.tyrantSeenId = null;
+        else if (e.type === "death" && e.pikeId === this.sim.playerId) {
+          const me = this.sim.player();
+          if (me) me.deathCause = e.cause; // for the death screen's copy (heron, otter, angler...)
+        }
+        this.sim.events.push(e);
+      }
     else if (m.t === "you") {
       this.sim.playerId = m.pikeId;
       this.gotSnap = false;
@@ -224,6 +236,12 @@ export class NetGuest {
   }
 }
 
+function fullText(reason: FullMsg["reason"]): string {
+  if (reason === "version") return "That lake runs another version of the game. Refresh the page (host and guests) to update.";
+  if (reason === "players") return "That lake is full";
+  return "That lake is full, or the host runs an older version (ask them to refresh the page)";
+}
+
 /** Wait for the host's welcome on a fresh guest connection. */
 export function awaitWelcome(net: GuestTransport, name: string, version: number): Promise<WelcomeMsg> {
   return new Promise((resolve, reject) => {
@@ -235,7 +253,7 @@ export function awaitWelcome(net: GuestTransport, name: string, version: number)
         resolve(m);
       } else if (m?.t === "full") {
         clearTimeout(t);
-        reject(new Error("That lake is full"));
+        reject(new Error(fullText(m.reason)));
       }
     });
     net.send({ t: "hello", v: version, name });

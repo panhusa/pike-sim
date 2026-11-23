@@ -4,11 +4,11 @@ import { preySpeed } from "./prey";
 import type { PikeInput, PikeState } from "./pike";
 import type { Params } from "./params";
 import type { Simulation } from "./simulation";
-import { LURE_LENGTH_CM } from "./extras";
+import { FROG, LURE_LENGTH_CM } from "./extras";
 
 export interface LungeTarget {
   id: number;
-  kind: "prey" | "pike" | "insect" | "lure";
+  kind: "prey" | "pike" | "insect" | "frog" | "lure";
   pos: Vec3;
   distance: number; // m, from the pike's mouth
   edible: boolean;
@@ -33,7 +33,7 @@ export function lungeTargets(sim: Simulation, pk: PikeState): LungeTarget[] {
   const scored: { t: LungeTarget; score: number }[] = [];
 
   const consider = (id: number, kind: LungeTarget["kind"], pos: Vec3, speed: number, lengthCm: number): void => {
-    if (kind === "insect") {
+    if (kind === "insect" || kind === "frog") {
       // a silhouette on the bright surface: seen within a few metres, inside the vision cone
       const d = Math.hypot(pos.x - pk.pos.x, pos.y - pk.pos.y, pos.z - pk.pos.z);
       if (d > Math.min(6, sim.env.visibilityM)) return;
@@ -50,7 +50,8 @@ export function lungeTargets(sim: Simulation, pk: PikeState): LungeTarget[] {
       kind,
       pos,
       distance,
-      edible: lengthCm <= maxLen,
+      // game boss: its target may lunge at the tyrant (a bite, not a meal)
+      edible: lengthCm <= maxLen || (kind === "pike" && id === sim.tyrant?.id && !sim.tyrant.outcome && pk.id === sim.tyrant.targetId),
       inRange: distance <= range,
       inCone: angle <= p.pike.lungeConeRad,
     };
@@ -64,6 +65,8 @@ export function lungeTargets(sim: Simulation, pk: PikeState): LungeTarget[] {
     if (lure) consider(lure.id, "lure", lure.pos, 0.9, LURE_LENGTH_CM);
     const nearSurface = pk.pos.y > -0.6;
     for (const f of sim.extras.insects) if (!f.aloft || nearSurface) consider(f.id, "insect", f.pos, 0.1, 1);
+    // a frog is only a target for a pike that can swallow it, and not while it is under water
+    if (pk.lengthCm >= FROG.minPikeCm) for (const f of sim.extras.frogs) if (f.diveT <= 0) consider(f.id, "frog", f.pos, 0.1, FROG.lengthCm);
   }
 
   return scored.sort((a, b) => b.score - a.score || a.t.id - b.t.id).map((s) => s.t);

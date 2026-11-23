@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Simulation } from "../src/sim/simulation";
+import { Simulation, shelteredDrift } from "../src/sim/simulation";
 import { presetSettings } from "../src/sim/settings";
 import { defaultParams } from "../src/sim/params";
 import { World } from "../src/sim/world";
@@ -84,6 +84,36 @@ describe("river simulation", () => {
       sim.step(1 / 60);
     }
     expect(pl.pos.x - x0).toBeGreaterThan(0.15);
+  });
+  it("game: a larva and its baby prey shelter from the current; a 15 cm pike and bigger fish drift fully", () => {
+    expect(shelteredDrift(1.2)).toBe(0);
+    expect(shelteredDrift(2.5)).toBe(0);
+    expect(shelteredDrift(7.5)).toBeCloseTo(0.5, 5);
+    expect(shelteredDrift(12.5)).toBe(1);
+    const run = (len: number, arcade: boolean) => {
+      const sim = new Simulation({ seed: 9, settings: { ...presetSettings("natural", "permadeath", defaultParams), map: "river" }, startHour: 12 });
+      const pl = sim.addPlayer(len);
+      sim.arcade = arcade;
+      const w = sim.world;
+      let x = 0;
+      for (let i = 0; i < 400; i++) {
+        const xi = i * 0.2 - 40;
+        if (w.currentAt(xi, -0.3, w.centreZ(xi)).x > 0.3) {
+          x = xi;
+          break;
+        }
+      }
+      pl.pos = { x, y: -0.3, z: w.centreZ(x) };
+      pl.speed = 0;
+      for (let i = 0; i < 60; i++) {
+        sim.setInput(pl.id, { throttle: 0, yawRate: 0, pitchRate: 0, burst: false });
+        sim.step(1 / 60);
+      }
+      return pl.pos.x - x;
+    };
+    expect(Math.abs(run(1.2, true))).toBeLessThan(0.02); // sheltered larva
+    expect(run(15, true)).toBeGreaterThan(0.15); // past the nursery ramp
+    expect(run(1.2, false)).toBeGreaterThan(0.15); // the realistic sim is untouched
   });
   it("keeps the river through a save round-trip", () => {
     const sim = new Simulation({ seed: 9, settings: { ...presetSettings("natural", "permadeath", defaultParams), map: "river" } });

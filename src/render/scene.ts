@@ -8,10 +8,12 @@ import { seededRng, type RenderCtx } from "./ctx";
 import { buildAbove, landOut } from "./above";
 import { buildExtras } from "./extras";
 import { buildFish } from "./fish";
-import { DEFAULT_GFX, type GfxSettings } from "./gfxSettings";
+import { HatchBurst } from "./hatch";
+import { DEFAULT_GFX, warmMayContinue, warmTargets, type GfxSettings } from "./gfxSettings";
 import { buildParticles } from "./particles";
 import { buildPlants } from "./plants";
 import { buildTerrain } from "./terrain";
+import { fogCullRadius } from "./cull";
 import { setOutlinesVisible } from "./outline";
 import { buildPost, pixelRatioFor, type PostChain } from "./post";
 import { plantFadeScale } from "./shaders/plantFade.glsl";
@@ -22,9 +24,7 @@ type Part = { dispose(): void };
 /** Orchestrator: owns the renderer, lights and camera, and delegates the world to the build* modules. */
 export class PikeScene {
   readonly scene = new THREE.Scene();
-  /** Egg start: while set, a translucent egg is drawn round the player (wobble 0..1 = how close to hatching). */
-  egg: { wobble: number } | null = null;
-  private eggMesh: THREE.Mesh | null = null;
+  private hatch: HatchBurst;
   readonly camera = new THREE.PerspectiveCamera(65, 1, 0.05, 120);
   readonly renderer: THREE.WebGLRenderer;
   /** resting field of view: wider in portrait so a phone shows more than a sliver of water */
@@ -38,12 +38,16 @@ export class PikeScene {
   private extras: ReturnType<typeof buildExtras>;
   private above: ReturnType<typeof buildAbove>;
   private water: ReturnType<typeof buildWater>;
-  private terrain: Part;
-  private plants: Part & { padSpots: Array<[number, number]> };
+  private terrain: ReturnType<typeof buildTerrain>;
+  private plants: ReturnType<typeof buildPlants>;
   private shafts: ReturnType<typeof buildShafts>;
   private post: PostChain | null = null;
   private parts: Part[];
   private gfx: GfxSettings;
+  /** set by dispose(); a late prewarm stage then does nothing */
+  private disposed = false;
+  /** set by abandonPrewarm() when play started without waiting for the prewarm (timeout) */
+  private warmAbandoned = false;
   /** Draw calls in the last rendered frame, summed over every pass (for the ?debug=1 HUD). */
   drawCalls = 0;
 
@@ -58,6 +62,7 @@ export class PikeScene {
     this.rig = new CameraRig(this.camera);
     setOutlinesVisible(this.camera, gfx.style === "stylised");
     this.fish = buildFish(this.ctx);
+    this.hatch = new HatchBurst(this.scene);
     this.particles = buildParticles(this.ctx);
     this.water = buildWater(this.ctx);
     this.terrain = buildTerrain(this.ctx);
@@ -119,11 +124,9 @@ export class PikeScene {
 
   /** Release GPU resources and listeners; the canvas can then host a new PikeScene. */
   dispose(): void {
+    this.disposed = true;
     window.removeEventListener("resize", this.onResize);
-    if (this.eggMesh) {
-      this.eggMesh.geometry.dispose();
-      (this.eggMesh.material as THREE.Material).dispose();
-    }
+    this.hatch.dispose();
     try {
       for (const p of [...this.parts, ...(this.post ? [this.post] : [])]) {
         try {
@@ -158,22 +161,55 @@ export class PikeScene {
     return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h, visible: v.z > -1 && v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
   }
 
-  private drawEgg(player: PikeState, timeS: number): void {
-    if (!this.egg) {
-      if (this.eggMesh) this.eggMesh.visible = false;
-      return;
+  /** Start the egg-cluster hatch effect (2.5 s) at a world position. */
+  hatchAt(pos: Vec3, timeS: number): void {
+    this.hatch.start(pos, timeS);
+  }
+
+  /**
+   * Compile every shader the scene can use before the first play frame, hidden actors (heron, otter, frogs, hatch
+   * burst) included, then draw one frame so the post passes compile too. Without this, three.js compiles each
+   * program on the frame that first draws it: the first play frame stalls for seconds and later first sightings hitch.
+   * Uses KHR_parallel_shader_compile where the browser has it (the page stays responsive while drivers compile).
+   */
+  async prewarm(player: PikeState, timeS: number, env: Environment): Promise<void> {
+    const live = (): boolean => warmMayContinue({ disposed: this.disposed, abandoned: this.warmAbandoned });
+    this.prepareActors(player);
+    const want = warmTargets(this.gfx);
+    if (want.post && this.post && live()) await this.compileFor(this.post.sceneTarget);
+    if (want.screen && live()) await this.compileFor(null);
+    if (live()) this.render(player, timeS, env, 0, { yaw: 0, pitch: 0 });
+  }
+
+  /** Play started without waiting for prewarm() (timeout): its remaining stages and the warm frame are skipped. */
+  abandonPrewarm(): void {
+    this.warmAbandoned = true;
+  }
+
+  /** Create the pike meshes (and a hatchling's yolk sac) for the current pikes, as the first frame would. */
+  prepareActors(player: PikeState): void {
+    this.fish.update(player, this.rig.hidesPlayer);
+  }
+
+  /**
+   * Compile the canvas (Low) variants in the background so an automatic drop to Low does not stall on compiles.
+   * Only where KHR_parallel_shader_compile exists: without it compiling would block the frame it runs in.
+   */
+  warmOtherQuality(): void {
+    if (!this.post || !this.renderer.extensions.has("KHR_parallel_shader_compile")) return;
+    this.compileFor(null).catch((e: unknown) => console.warn("background shader compile failed", e));
+  }
+
+  /** compileAsync against one render target (it selects the program variant); compile() itself runs synchronously. */
+  private compileFor(target: THREE.WebGLRenderTarget | null): Promise<unknown> {
+    const r = this.renderer;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(target);
+    try {
+      return r.compileAsync(this.scene, this.camera);
+    } finally {
+      r.setRenderTarget(prev);
     }
-    if (!this.eggMesh) {
-      const mat = new THREE.MeshStandardMaterial({ color: 0xe8c86a, emissive: 0x4a3510, roughness: 0.25, transparent: true, opacity: 0.42, depthWrite: false });
-      this.eggMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), mat);
-      this.scene.add(this.eggMesh);
-    }
-    const r = (player.lengthCm / 100) * 0.42;
-    const w = this.egg.wobble;
-    const shake = Math.sin(timeS * (8 + 20 * w)) * 0.06 * w;
-    this.eggMesh.visible = true;
-    this.eggMesh.position.set(player.pos.x, player.pos.y, player.pos.z);
-    this.eggMesh.scale.set(r * (1 + shake), r * (1 - shake), r * (1 + shake * 0.5));
   }
 
   /** Draw the current sim state from the player's pike. `look` is extra camera yaw/pitch offset. */
@@ -186,8 +222,13 @@ export class PikeScene {
     this.sunlight.intensity = 0.15 + 1.6 * day;
     this.ambient.intensity = 0.25 + 0.8 * day;
 
-    this.fish.update(player, this.rig.hidesPlayer);
     this.rig.update(player, look, this.ctx.sim.world, dt);
+    // drop what the water's absorption hides (and draw distant fish coarser): the triangle budget
+    const cam = this.rig.position;
+    const view = { x: cam.x, y: cam.y, z: cam.z, radius: fogCullRadius(env.visibilityM, cam.y > 0) };
+    this.fish.update(player, this.rig.hidesPlayer, view);
+    this.terrain.update(view);
+    this.plants.update(view);
     // tiny fish: bring the near plane and the plant fade in with the camera, so a 1 cm larva is visible in its weed bed
     const near = Math.min(0.05, Math.max(0.003, this.rig.lastDist * 0.15));
     if (Math.abs(this.camera.near - near) > near * 0.1) {
@@ -195,7 +236,7 @@ export class PikeScene {
       this.camera.updateProjectionMatrix();
     }
     plantFadeScale.value = Math.min(1, Math.max(0.03, player.lengthCm / 22));
-    this.drawEgg(player, timeS);
+    this.hatch.update(timeS);
     this.water.update(env, this.rig.position.y);
     this.particles.update(timeS, dt, this.rig.position, env);
     this.shafts.update(env, this.rig.position);

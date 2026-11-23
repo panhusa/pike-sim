@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { RenderCtx } from "./ctx";
+import { InstanceCull, type CullView } from "./cull";
 import type { GfxQuality } from "./gfxSettings";
 import { BIG } from "../sim/world";
 import { nearFade, plantFadeScale, plantFragment, plantFragmentPars, plantVertex, plantVertexPars } from "./shaders/plantFade.glsl";
@@ -114,8 +115,15 @@ function padGeometry(): THREE.BufferGeometry {
   return g;
 }
 
-/** Reeds (blades), bottom weed (milfoil fronds) and lily pads with stems. Placement is seeded per world. */
-export function buildPlants(ctx: RenderCtx): { dispose(): void; padSpots: Array<[number, number]> } {
+/** Reach (m) of a plant instance past its base on the ground plane: lean, curve, sway, leaf cards; pads by radius. */
+const PLANT_REACH = 1.5;
+const PAD_REACH = 0.6;
+
+/**
+ * Reeds (blades), bottom weed (milfoil fronds) and lily pads with stems. Placement is seeded per world.
+ * `update` drops the instances lost in the water's absorption around the camera (see fogCullRadius).
+ */
+export function buildPlants(ctx: RenderCtx): { update(view: CullView): void; dispose(): void; padSpots: Array<[number, number]> } {
   const w = ctx.sim.world;
   const counts = plantCounts(ctx.gfx.quality, w.reeds.length, w.weeds.length, w.big ? BIG.bladesPerBed : 1);
   const perReed = w.reeds.length ? counts.reedBlades / w.reeds.length : 0;
@@ -258,8 +266,16 @@ export function buildPlants(ctx: RenderCtx): { dispose(): void; padSpots: Array<
   if (pads.instanceColor) pads.instanceColor.needsUpdate = true;
 
   geos.push(bladeGeo, frondGeo, padGeo, stemGeo);
+  reeds.name = "reed blades";
+  weeds.name = "weed fronds";
+  pads.name = "lily pads";
+  stems.name = "lily stems";
+  const culls = [new InstanceCull(reeds, PLANT_REACH), new InstanceCull(weeds, PLANT_REACH), new InstanceCull(pads, PAD_REACH), new InstanceCull(stems, PAD_REACH)];
   return {
     padSpots,
+    update(view) {
+      for (const c of culls) c.update(view);
+    },
     dispose() {
       for (const o of added) {
         ctx.scene.remove(o);

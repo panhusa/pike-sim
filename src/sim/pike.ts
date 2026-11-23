@@ -12,7 +12,7 @@ export interface PikeInput {
 }
 
 export type Sex = "male" | "female";
-export type DeathCause = "starvation" | "eaten" | "caught";
+export type DeathCause = "starvation" | "eaten" | "caught" | "heron" | "otter";
 
 export interface PikeState {
   id: number;

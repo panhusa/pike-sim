@@ -1,4 +1,4 @@
-import { autoQuality, initialGfx, loadGfx, saveGfx, type GfxSettings } from "./render/gfxSettings";
+import { autoQuality, backgroundWarm, initialGfx, loadGfx, saveGfx, type GfxSettings } from "./render/gfxSettings";
 import { PikeScene } from "./render/scene";
 import { CAMERA_LABEL, CAMERA_MODES, type CameraMode } from "./render/camera";
 import { defaultParams } from "./sim/params";
@@ -17,15 +17,16 @@ import { AdaptiveResolution, stepPlan } from "./ui/frameBudget";
 import { GameSession } from "./ui/gameSession";
 import { nextHint, HINT_TEXT, TOUCH_HINT_TEXT } from "./ui/hints";
 import { computeMarks, renderMarks } from "./ui/markers";
-import { BurstOutcomes } from "./ui/outcome";
-import { hideOverlay, showDeath, showOnlineDeath, showPause, showStart, type NewLifeConfig, type SaveSlot } from "./ui/screens";
+import { BurstOutcomes, catchText } from "./ui/outcome";
+import { hideOverlay, showDeath, showLoading, showOnlineDeath, showPause, showStart, type NewLifeConfig } from "./ui/screens";
 import { NetHost } from "./net/host";
 import { awaitWelcome, NetGuest } from "./net/guest";
 import { cleanName, makeRoomCode, normaliseRoomCode, PROTOCOL_VERSION } from "./net/protocol";
 import { hostRoom, joinRoom } from "./net/transport";
 import { isTouchDevice, loadControlMode, mountTouchControls, requestMotionPermission, saveControlMode, type ControlMode, type TouchControls, type TouchInput } from "./ui/touch";
 import { persistDeath, persistNewLife } from "./ui/policy";
-import { browserStorage, createSaveStore } from "./ui/storage";
+import { browserStorage, type SaveStore } from "./ui/storage";
+import { listSlots, migrateV1, slotStore } from "./ui/slots";
 import { GamepadInput, type PadState } from "./ui/gamepad";
 import { openPadSetup, padSetupOpen } from "./ui/padSetup";
 import { SessionRecorder } from "./ui/recorder";
@@ -70,7 +71,10 @@ async function recStop(): Promise<void> {
 addEventListener("error", (e) => rec.event("error", { message: e.message, at: `${e.filename}:${e.lineno}` }));
 addEventListener("unhandledrejection", (e) => rec.event("error", { message: String(e.reason) }));
 const debug = query.get("debug") === "1";
-const store = createSaveStore(browserStorage());
+const saveStorage = browserStorage();
+migrateV1(saveStorage);
+/** the save slot of the life being played (set by Continue / Start a new life on the start screen) */
+let store: SaveStore = slotStore(saveStorage, "lake", 1);
 // --- camera: C cycles modes, wheel zooms, Q/E orbit, V resets; the mode is remembered ---
 const CAM_KEY = "pike.camera.v1";
 function loadCameraMode(): CameraMode {
@@ -148,10 +152,12 @@ function saveName(n: string): void {
   }
 }
 
-type Mode = "menu" | "playing" | "paused" | "dead";
+type Mode = "menu" | "loading" | "playing" | "paused" | "dead";
 let mode: Mode = "menu";
 let sim: Simulation | null = null;
 let view: PikeScene | null = null;
+/** Performance marks (scripts/startup-profile.py): set on entering a life, cleared after the first play frame is drawn. */
+let firstRender = false;
 let pendingPermission: Promise<boolean> | undefined;
 let eventCursor = 0;
 let lastDay = 0;
@@ -185,10 +191,6 @@ const KB_TURN_RAD_S = 1.6;
 /** Within this height over the lakebed (m) a dive flattens out, so the pike glides along the bottom instead of ploughing into it. */
 const BOTTOM_ASSIST_M = 0.6;
 /** Body attitude at the last input step: a lunge turns the body, and the wanted heading turns with it (mouse input kept). */
-/** Egg start: the pike waits in its egg until the player wriggles (strike / swim presses) or time runs out. */
-const EGG_TAPS = 6;
-const EGG_MAX_S = 20;
-let egg: { taps: number; t: number } | null = null;
 let lastBodyYaw = 0;
 let lastBodyPitch = 0;
 /** Keyboard / gamepad pitch: hold to dive or rise (up to this angle), the pike levels out again on release. */
@@ -260,8 +262,7 @@ addEventListener("keydown", (e) => {
     view.rig.orbit = 0;
     view.rig.zoom = 1;
   }
-  if (egg && mode === "playing" && !e.repeat && (e.code === "KeyW" || e.code === "ArrowUp" || e.code === "Space")) egg.taps++;
-  else if (e.code === "Space") burstQueued = true;
+  if (e.code === "Space") burstQueued = true;
   if (e.code === "KeyT" && debug) timeScaleIdx = (timeScaleIdx + 1) % TIME_SCALES.length;
   if (e.code === "Escape") pause();
 });
@@ -270,8 +271,7 @@ addEventListener("keyup", (e) => {
   if (e.code === "KeyR") restLatch = false;
 });
 canvas.addEventListener("mousedown", () => {
-  if (egg && mode === "playing") egg.taps++;
-  else if (mode === "playing" && !touchOn) burstQueued = true;
+  if (mode === "playing" && !touchOn) burstQueued = true;
 });
 addEventListener("mousemove", (e) => {
   if (mode !== "playing" || document.pointerLockElement !== canvas) return;
@@ -326,12 +326,6 @@ function playerInput(pl: PikeState): PikeInput {
 }
 
 function playerInputRaw(pl: PikeState): PikeInput {
-  if (egg) {
-    if (touchIn?.burst) egg.taps++; // keys, mouse and pad count on the press itself
-    burstQueued = false;
-    if (touchIn) touchIn.burst = false;
-    return { throttle: 0, yawRate: 0, pitchRate: 0, burst: false };
-  }
   const kbThrottle = Math.max(pad.throttle, keys.has("KeyW") || keys.has("ArrowUp") ? (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.25 : 1) : 0);
   const burst = burstQueued || !!touchIn?.burst;
   burstQueued = false;
@@ -386,7 +380,8 @@ function sayOutcome(e: SimEvent | null, s: Simulation): void {
   if (e.type === "capture") {
     s.playerHintsDone = true;
     if (e.kind === "insect") say(`Snapped up an insect (+${e.grams.toFixed(1)} g)`);
-    else say(`Caught a ${e.kind === "pike" ? "pike" : s.p.prey[e.kind].label.toLowerCase()} ${Math.round(e.lengthCm)} cm (+${Math.round(e.grams)} g)`);
+    else if (e.kind === "frog") say(`Gulped a frog (+${Math.round(e.grams)} g)`);
+    else say(catchText(e.kind === "pike" ? "pike" : s.p.prey[e.kind].label.toLowerCase(), e.lengthCm, e.grams));
     pulseStomach();
   } else if (e.type === "miss") say(MISS_TEXT[e.reason]);
   else if (e.type === "strike-empty") say("Nothing in range.");
@@ -444,7 +439,8 @@ function updateHud(s: Simulation, pl: PikeState, restText: string): void {
 // --- saving ---
 let lastSaveWarn = -Infinity;
 function autosave(daily = false): void {
-  if (net || !sim || !sim.player()?.alive) return; // a shared lake is never saved
+  // a shared lake is never saved; on the start screen the life was saved on the way there (and its slot may be deleted)
+  if (net || mode === "menu" || !sim || !sim.player()?.alive) return;
   const text = toSaveFile(sim, new Date());
   let ok = store.save(text);
   if (daily && sim.settings.deathMode === "rewind") ok = store.saveRewind(text) && ok;
@@ -459,7 +455,7 @@ addEventListener("pagehide", () => autosave());
 function settingsFrom(c: NewLifeConfig): SimSettings {
   const base = presetSettings(c.preset === "custom" ? "natural" : c.preset, c.deathMode, defaultParams);
   const s = c.preset === "custom" ? { ...base, rivalCount: c.rivalCount, rivalSizeScale: c.rivalSizeScale, aggression: c.aggression } : base;
-  return { ...s, map: c.map, chill: c.chill, big: true, growthMul: c.growthMul, startEgg: c.startEgg };
+  return { ...s, map: c.map, chill: c.chill, big: true, growthMul: c.growthMul, startEgg: c.startEgg, ...(c.startCm === undefined ? {} : { startCm: c.startCm }) };
 }
 
 function warnSaveFailed(): void {
@@ -468,12 +464,67 @@ function warnSaveFailed(): void {
   say("Progress could not be saved");
 }
 
-function enter(next: Simulation): void {
-  view?.dispose();
-  sim = next;
-  sim.arcade = true; // game feel for the player; the realistic model stays the default in tests
-  view = new PikeScene(canvas, sim, gfx);
-  view.rig.setMode(loadCameraMode());
+/** Bumped on every enter (and when leaving online play), so a scene still compiling for an abandoned life is dropped. */
+let enterToken = 0;
+/** Next frame painted, so the loading screen shows before the main thread is busy building the scene. */
+const nextPaint = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+/** Play starts after this even if shaders are still compiling (a lost WebGL context never reports them ready). */
+const PREWARM_TIMEOUT_MS = 8000;
+const PER_LIFE_MARKS = ["pike:scene0", "pike:prewarm0", "pike:render0", "pike:enter"];
+const PER_LIFE_MEASURES = ["pike:scene", "pike:prewarm", "pike:firstRender"];
+
+/**
+ * Start playing `next`: show "Filling the lake…", build the scene and compile its shaders, then play.
+ * The same simulation with a live scene (a respawn, continuing as offspring) keeps its scene, so a host never stops
+ * simulating the shared lake for its guests.
+ * Resolves true once playing (or on the death screen), false when another enter or a leave replaced it meanwhile.
+ */
+async function enter(next: Simulation): Promise<boolean> {
+  const token = ++enterToken;
+  for (const n of PER_LIFE_MARKS) performance.clearMarks(n);
+  for (const n of PER_LIFE_MEASURES) performance.clearMeasures(n);
+  next.arcade = true; // game feel for the player; the realistic model stays the default in tests
+  if (!(view && sim === next)) {
+    view?.dispose();
+    view = null;
+    sim = null; // nothing renders or steps until the new scene is warm
+    mode = "loading";
+    showLoading(overlay);
+    if (!touchOn) lockPointer(); // still inside the click that started the life
+    await nextPaint();
+    if (token !== enterToken) return false;
+    let v: PikeScene;
+    try {
+      performance.mark("pike:scene0");
+      v = new PikeScene(canvas, next, gfx);
+      performance.measure("pike:scene", "pike:scene0");
+    } catch (e) {
+      console.error("scene build failed", e);
+      if (net) leaveOnline();
+      else openMenu();
+      say("Could not start the 3D view. Try again, or reload the page.", 8000);
+      return false;
+    }
+    v.rig.setMode(loadCameraMode());
+    performance.mark("pike:prewarm0");
+    try {
+      const timedOut = await Promise.race([
+        v.prewarm(next.player()!, next.time, next.env).then(() => false),
+        new Promise<boolean>((r) => setTimeout(() => r(true), PREWARM_TIMEOUT_MS)),
+      ]);
+      if (timedOut) v.abandonPrewarm(); // a late prewarm must not render outside frame()
+    } catch (e) {
+      console.error("shader prewarm failed", e); // play anyway: three.js compiles on first use
+    }
+    performance.measure("pike:prewarm", "pike:prewarm0");
+    if (token !== enterToken) {
+      v.dispose();
+      return false;
+    }
+    sim = next;
+    view = v;
+  } else view.prepareActors(next.player()!); // same scene: the new pike's meshes exist before its first frame
+  if (!view || !sim) return false;
   showCameraLabel();
   adaptiveRes = new AdaptiveResolution(view.renderer.getPixelRatio());
   fpsProbe = { acc: 0, frames: 0, done: false };
@@ -490,34 +541,52 @@ function enter(next: Simulation): void {
   document.body.classList.toggle("online", net !== null);
   lastDay = Math.floor(sim.time / sim.p.environment.dayLengthS);
   (window as unknown as { __pike: unknown }).__pike = { sim, view, player: pl };
-  if (!pl.alive) return die(false, false);
+  if (!pl.alive) {
+    die(false, false);
+    return true;
+  }
   mode = "playing";
   hideOverlay(overlay);
   if (!touchOn) lockPointer();
+  if (backgroundWarm(gfx)) {
+    // after the first play frames, before the 3 s probe can drop to low: the drop then finds its shaders ready
+    const warmed = view;
+    setTimeout(() => view === warmed && mode === "playing" && backgroundWarm(gfx) && warmed.warmOtherQuality(), 1000);
+  }
   if (query.get("rec") === "1") recStart();
-  egg = sim.settings.startEgg && pl.lengthCm <= EGG_LENGTH_CM + 1e-6 ? { taps: 0, t: 0 } : null;
-  view.egg = egg ? { wobble: 0 } : null;
-  if (egg) say("You are an egg in the weeds. Wriggle out: press Space or W (or ✕) a few times", 6000);
+  if (sim.settings.startEgg && pl.lengthCm <= EGG_LENGTH_CM + 1e-6) {
+    view.hatchAt(pl.pos, sim.time);
+    say("You hatched in the weeds. Eat the tiny fish around you to grow", 4500);
+    rec.event("hatch");
+  }
+  performance.mark("pike:enter", { detail: { programs: view.renderer.info.programs?.length ?? 0 } });
+  firstRender = true;
   rec.event("enter", { settings: { ...sim.settings }, lengthCm: pl.lengthCm, online: net?.kind ?? null });
+  return true;
 }
 
-/** Where a new human pike starts: an egg in a weed bed, or within sight of food. */
+/** Where a new human pike starts: a larva hatching in a weed bed, or within sight of food. */
 function placeStart(s: Simulation, pl: PikeState): void {
   if (!(s.settings.startEgg && placeInWeedBed(s.world, pl))) placePlayerNearPrey(s, 7, pl);
 }
 
 function newLife(settings: SimSettings, seed: number): void {
+  performance.clearMeasures("pike:sim");
+  performance.clearMeasures("pike:save");
+  performance.mark("pike:sim0");
   const s = new Simulation({ seed, settings });
   const pl = s.addPlayer(startLengthCm(settings, s.p));
   s.arcade = true;
   placeStart(s, pl);
-  enter(s);
-  say(`You are a ${pl.sex} pike`);
+  performance.measure("pike:sim", "pike:sim0");
+  void enter(s).then((ok) => ok && say(`You are a ${pl.sex} pike`));
+  performance.mark("pike:save0");
   if (!persistNewLife(store, settings.deathMode, toSaveFile(s, new Date()))) warnSaveFailed();
+  performance.measure("pike:save", "pike:save0");
 }
 
 // --- multiplayer flow ---
-async function hostGame(name: string, map: MapShape = "lake", chill = true, growthMul = 1, startEgg = false): Promise<void> {
+async function hostGame(name: string, map: MapShape = "lake", chill = true, growthMul = 1, start: { startEgg: boolean; startCm?: number } = { startEgg: false }): Promise<void> {
   saveName(name);
   let code = makeRoomCode();
   let t;
@@ -529,7 +598,7 @@ async function hostGame(name: string, map: MapShape = "lake", chill = true, grow
       throw new Error(`Could not open a lake (${e instanceof Error ? e.message : "no connection"}). Check your internet connection.`);
     });
   }
-  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill, big: true, growthMul, startEgg } });
+  const s = new Simulation({ seed: Math.floor(Math.random() * 1e9), settings: { ...presetSettings("gentle", "permadeath", defaultParams), map, chill, big: true, growthMul, ...start } });
   const hpl = s.addPlayer(startLengthCm(s.settings, s.p));
   s.arcade = true;
   placeStart(s, hpl);
@@ -537,8 +606,7 @@ async function hostGame(name: string, map: MapShape = "lake", chill = true, grow
   host.hostName = myName;
   net = { kind: "host", host };
   pendingPermission = motionPermission();
-  enter(s);
-  say(`Your code is ${code}. Friends join with it.`, 12000);
+  void enter(s).then((ok) => ok && say(`Your code is ${code}. Friends join with it.`, 12000));
 }
 
 async function joinGame(name: string, rawCode: string): Promise<void> {
@@ -565,8 +633,7 @@ async function joinGame(name: string, rawCode: string): Promise<void> {
   };
   net = { kind: "guest", guest };
   pendingPermission = motionPermission();
-  enter(guest.sim);
-  say(`Joined lake ${code}`);
+  void enter(guest.sim).then((ok) => ok && say(`Joined lake ${code}`));
 }
 
 function waitFor(cond: () => boolean, ms: number, msg: string): Promise<void> {
@@ -588,6 +655,7 @@ function leaveOnline(): void {
   $("room").textContent = "";
   $("board").replaceChildren();
   $("tags").replaceChildren();
+  enterToken++; // drop a scene still compiling for this lake
   view?.dispose();
   view = null;
   sim = null;
@@ -601,13 +669,13 @@ function respawnOnline(): void {
     const pl = sim.addPlayer(startLengthCm(sim.settings, sim.p));
     if (old) sim.humanIds.delete(old.id);
     placeStart(sim, pl);
-    enter(sim);
+    void enter(sim);
     return;
   }
   const g = net.guest;
   g.respawn();
   waitFor(() => g.ready, 10000, "The host did not respawn you").then(
-    () => enter(g.sim),
+    () => void enter(g.sim),
     () => leaveOnline(),
   );
 }
@@ -618,20 +686,27 @@ function openMenu(): void {
   touch = null;
   touchIn = null;
   if (document.pointerLockElement) document.exitPointerLock?.();
-  const text = store.load();
-  let slot: SaveSlot = { kind: "none" };
-  if (text !== null) {
-    const r = parseSave(text);
-    slot = r.ok ? { kind: "ok", sim: r.sim } : { kind: "bad", text };
-  }
   const seed = query.get("seed");
+  performance.mark("pike:menu0");
   showStart(
     overlay,
-    slot,
-    store.available,
+    listSlots(saveStorage),
+    saveStorage !== null,
     {
-      onContinue: (s) => ((pendingPermission = motionPermission()), enter(s)),
-      onNew: (c) => ((pendingPermission = motionPermission()), newLife(settingsFrom(c), c.seed)),
+      onContinue(x) {
+        store = slotStore(saveStorage, x.map, x.n);
+        pendingPermission = motionPermission();
+        void enter(x.sim);
+      },
+      onNew(c) {
+        store = slotStore(saveStorage, c.map, c.slot);
+        pendingPermission = motionPermission();
+        newLife(settingsFrom(c), c.seed);
+      },
+      onDelete(x) {
+        if (!slotStore(saveStorage, x.map, x.n).clear()) say("Could not delete that save");
+        openMenu();
+      },
       onDownload(t) {
         const a = document.createElement("a");
         a.href = URL.createObjectURL(new Blob([t], { type: "application/json" }));
@@ -647,6 +722,7 @@ function openMenu(): void {
     },
     seed === null ? undefined : Number(seed),
   );
+  performance.measure("pike:menu", "pike:menu0");
 }
 
 function pause(): void {
@@ -688,7 +764,7 @@ function die(noOffspring = false, persist = true): void {
     game.death();
     if (document.pointerLockElement) document.exitPointerLock?.();
     const killer = pl?.killedBy !== undefined ? playerName(pl.killedBy) : null;
-    const cause = pl?.deathCause === "caught" ? "An angler landed you. Into the keep net!" : killer ? `${killer} ate you.` : pl?.deathCause === "starvation" ? "You starved." : "A bigger pike got you.";
+    const cause = pl?.deathCause === "caught" ? "An angler landed you. Into the keep net!" : pl?.deathCause === "heron" ? "A heron speared you." : pl?.deathCause === "otter" ? "An otter caught you." : killer ? `${killer} ate you.` : pl?.deathCause === "starvation" ? "You starved." : "A bigger pike got you.";
     return showOnlineDeath(overlay, cause, game.points, respawnOnline, leaveOnline);
   }
   const s = lifeSummary(sim);
@@ -718,16 +794,14 @@ function die(noOffspring = false, persist = true): void {
         const t = store.loadRewind();
         const r = t === null ? null : parseSave(t);
         if (r?.ok) {
-          enter(r.sim);
-          autosave();
+          void enter(r.sim).then((ok) => ok && autosave());
         } else newLife(lastSettings, Math.floor(Math.random() * 1e9));
       },
       onOffspring() {
         const r = continueAsOffspring(sim!);
         if (!r.ok) return die(true, false);
         if (r.fastForwardDays > 0) say(`Time passes: ${Math.round(r.fastForwardDays)} days`);
-        enter(sim!);
-        autosave();
+        void enter(sim!).then((ok) => ok && autosave());
       },
     },
   );
@@ -908,18 +982,6 @@ addEventListener("keydown", (e) => {
 });
 
 /** Gamepad buttons and keyboard/stick steering, once per rendered frame. */
-function eggFrame(frameDt: number): void {
-  if (!egg || mode !== "playing" || !view) return;
-  egg.t += frameDt;
-  view.egg = { wobble: Math.min(1, egg.taps / EGG_TAPS) };
-  if (egg.taps >= EGG_TAPS || egg.t >= EGG_MAX_S) {
-    egg = null;
-    view.egg = null;
-    say("You hatched! Eat the tiny fish around you to grow", 4000);
-    rec.event("hatch");
-  }
-}
-
 function padAndKeys(frameDt: number): void {
   if (padSetupOpen()) {
     pad = gamepad.read([]); // the setup screen owns the controller while it is open
@@ -934,10 +996,7 @@ function padAndKeys(frameDt: number): void {
   }
   if (pad.pause) return pause();
   if (pad.camera) nextCamera();
-  if (pad.strike) {
-    if (egg) egg.taps++;
-    else burstQueued = true;
-  }
+  if (pad.strike) burstQueued = true;
   const pl = sim?.player();
   if (!pl || !view || touchIn) return;
   view.rig.orbit += pad.orbit * 1.6 * frameDt;
@@ -962,7 +1021,6 @@ function frame(now: number): void {
   const frameDt = Math.min(0.1, (now - last) / 1000);
   last = now;
   padAndKeys(frameDt);
-  eggFrame(frameDt);
   if (sim && view) {
     let restText = "";
     const alive = !!sim.player()?.alive;
@@ -986,7 +1044,10 @@ function frame(now: number): void {
     drainEvents(sim, pl);
     if (rec.active) recFrame(sim, pl, frameDt);
     if (mode === "playing" && !pl.alive) die();
+    if (firstRender) performance.mark("pike:render0");
     view.render(pl, sim.time, sim.env, frameDt, { yaw: angleDiff(wantYaw, pl.yaw), pitch: wantPitch - pl.pitch });
+    if (firstRender) performance.measure("pike:firstRender", "pike:render0");
+    firstRender = false;
     if (mode === "playing") probeQuality(frameDt);
     if (debug && frameDt > 0) fpsShown += (1 / frameDt - fpsShown) * 0.05;
     const ratio = mode === "playing" ? adaptiveRes?.frame(frameDt) : null;

@@ -139,6 +139,54 @@ export const ANATOMY: Record<FishSpecies, Anatomy> = {
     pectoral: { t: 0.23, len: 0.085 },
     pelvic: { t: 0.42, len: 0.075 },
   },
+  // bream: very deep, flat-sided (a slab), tall short dorsal, long anal fin, deeply forked tail
+  bream: {
+    body: [
+      [0, 0.006, 0.006, 0.006],
+      [0.04, 0.03, 0.026, 0.016],
+      [0.1, 0.09, 0.07, 0.027],
+      [0.2, 0.16, 0.12, 0.034],
+      [0.32, 0.2, 0.15, 0.037],
+      [0.44, 0.19, 0.15, 0.036],
+      [0.58, 0.14, 0.12, 0.03],
+      [0.7, 0.09, 0.08, 0.022],
+      [0.8, 0.05, 0.05, 0.014],
+      [0.86, 0.036, 0.036, 0.01],
+    ],
+    squareness: 2.0,
+    gillT: 0.2,
+    eye: { t: 0.08, yFrac: 0.3, r: 0.02 },
+    mouth: { tEnd: 0.045, yFrac: -0.25 },
+    dorsal1: { t0: 0.34, t1: 0.5, h: (u) => 0.03 + 0.1 * Math.pow(1 - u, 0.8) * Math.min(1, u * 5 + 0.3), sweep: 0.05 },
+    anal: { t0: 0.5, t1: 0.8, h: (u) => 0.02 + 0.07 * Math.pow(1 - u, 0.6) * Math.min(1, u * 4 + 0.3), sweep: 0.03 },
+    caudal: { len: 0.16, span: 0.15, fork: 0.7 },
+    pectoral: { t: 0.22, len: 0.1 },
+    pelvic: { t: 0.38, len: 0.08 },
+  },
+  // tench: thick, rounded all over; fins like paddles; tiny eye
+  tench: {
+    body: [
+      [0, 0.008, 0.008, 0.01],
+      [0.04, 0.034, 0.03, 0.03],
+      [0.1, 0.06, 0.055, 0.052],
+      [0.2, 0.082, 0.078, 0.07],
+      [0.35, 0.095, 0.09, 0.076],
+      [0.5, 0.092, 0.088, 0.072],
+      [0.65, 0.077, 0.075, 0.06],
+      [0.78, 0.06, 0.058, 0.044],
+      [0.88, 0.05, 0.05, 0.032],
+      [0.92, 0.046, 0.046, 0.026],
+    ],
+    squareness: 2.0,
+    gillT: 0.2,
+    eye: { t: 0.09, yFrac: 0.4, r: 0.012 },
+    mouth: { tEnd: 0.05, yFrac: -0.05 },
+    dorsal1: { t0: 0.5, t1: 0.66, h: (u) => 0.02 + bump(u * 0.9 + 0.05, 0.075, 0.5), sweep: 0.015 },
+    anal: { t0: 0.66, t1: 0.8, h: (u) => 0.02 + bump(u * 0.9 + 0.05, 0.07, 0.5), sweep: 0.015 },
+    caudal: { len: 0.14, span: 0.14, fork: 0.0 },
+    pectoral: { t: 0.24, len: 0.1 },
+    pelvic: { t: 0.45, len: 0.085 },
+  },
 };
 
 /** Catmull-Rom through the keys for column `col` (1 top, 2 bottom, 3 width); clamps outside the body. */
@@ -194,10 +242,12 @@ export interface FishDetail {
   eyeSeg: number;
 }
 
-export const DETAIL: Record<"high" | "low" | "hero", FishDetail> = {
+/** `far` is Low quality's distant-fish variant (High uses `low` there); see FISH_LOD_NEAR_M in fish.ts. */
+export const DETAIL: Record<"high" | "low" | "hero" | "far", FishDetail> = {
   hero: { along: 110, around: 36, finCols: 22, finRows: 5, eyeSeg: 18 },
   high: { along: 56, around: 22, finCols: 12, finRows: 3, eyeSeg: 10 },
   low: { along: 32, around: 14, finCols: 7, finRows: 2, eyeSeg: 8 },
+  far: { along: 20, around: 10, finCols: 5, finRows: 1, eyeSeg: 6 },
 };
 
 /** Build the full fish (body, fins, eyes) for a species at a detail level. */

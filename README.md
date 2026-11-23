@@ -1,6 +1,6 @@
 # Pike
 
-You are a northern pike in a lake or a river. Hatch from an egg, hunt, grow from a 1 cm larva into a legend,
+You are a northern pike in a lake or a river. Hatch in the weeds, hunt, grow from a 1.2 cm larva into a legend,
 and get away when a bigger pike comes after you. Play alone or share a lake with up to 5 friends.
 
 **Play:** https://panhusa.github.io/pike-sim/ (desktop or phone, nothing to install)
@@ -9,18 +9,37 @@ Everything you see is procedural: the lake, plants, light and every fish (anatom
 are generated in code. There are no image or model files.
 
 ## How to play
-- **Chill** (default): nothing can kill you, just swim and hunt. **Challenge**: hunters, bites, anglers, starving.
+- **Chill** (default): nothing can kill you, just swim and hunt. Hunters and other threats still come after you;
+  if one gets you, you are **chased off** (stopped dead, combo lost) instead of hurt.
+  **Challenge**: bites cost hearts, and hunters, herons, otters, anglers and starving can end your life.
 - A minimap (N) shows food, bigger and smaller pike, players and the boat. **H** (or the ? button) lists every control.
 - Pick the **water** when you start: the **lake** (still, reed beds, a deep middle) or the **river**
   (a current that carries you downstream, deep slow pools and wide fast riffles; fish hold against the flow).
-- **Start as** an egg (default) or a 22 cm young pike. From the egg: wriggle out (Space / W, or ✕ on a pad), then grow
-  through Larva, Fry, Fingerling, Juvenile, Fry-hunter, Jack, Hunter, Predator, Lake tyrant and Legend. Until 22 cm
-  every catch grows you straight away, and schools of baby fish your size stay close by.
+- Each water has **three save slots**. The start screen lists your saved lives (continue or delete);
+  pick a slot for a new life and it asks before replacing a saved one.
+- **Start as** a larva (default) or a later stage: young pike (22 cm), Jack (30 cm), Hunter (40 cm),
+  Predator (55 cm) or almost a Lake tyrant (74 cm).
+- **The larva:** you hatch at 1.2 cm as an egg cluster bursts open in the weeds, and you can steer at once.
+  You carry a yolk sac until 2.5 cm. Until 22 cm every catch grows you straight away, and schools of baby fish your
+  size stay close by, so the first stages fly past (about 3 to 5 minutes to 22 cm at Normal, in the lake or the river).
+- Grow through Larva, Fry, Fingerling, Juvenile, Fry-hunter, Jack, Hunter, Predator, Lake tyrant and Legend.
 - Pick the **growth** speed: Normal, Fast (x3) or Very fast (x8). When hosting, your choices apply to everyone.
 - Fish near you get a ring. **Green** = in reach, strike now. **Amber** = edible, get closer. **Grey** = too big.
 - Quick catches build a combo (up to x5). Goals at the top pay bonuses; growing unlocks new stages.
-- Every few minutes a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.
+- **Trials:** reaching a new stage (Fry to Lake tyrant) starts that stage's trial, worth a big bonus:
+  3 catches inside 10 s, an ambush from the weeds, a perch, an insect snapped in mid-air, surviving a hunting pike,
+  5 catches in a row without a miss, throwing the angler's hook, and the tyrant.
+- **The Old Tyrant:** when you grow into a Lake tyrant (75 cm), the pike that rules the water comes for you.
+  It is a quarter longer than you, circles and charges every few seconds. Bite it 3 times (a separate strike each
+  time) to drive it off; dodge its charges. It swims away after 2 minutes if you can't, and comes back a minute later.
+- At every size, now and then a pike big enough to eat you hunts you: outswim it, or hide still in the weeds.
   A bite costs one of your three hearts; hearts come back over time.
+- **Herons** (4 to 60 cm, in water under 1.2 m deep): a shadow passes overhead, then the beak stabs where you were a
+  moment ago. Keep moving. **Otters** (10 to 70 cm) come in from the shore and chase you: hide still in the weeds or
+  outswim them. Only one threat comes at a time.
+- **Frogs** sit on the surface in the shallows and dive when you come close; from 14 cm you can swallow one
+  from below. Schools of **bream** (20 to 45 cm, open water) and
+  lone **tench** (15 to 40 cm, weedy shallows) are big meals for a grown pike.
 - Insects fall onto the surface: strike them from just below for a snack. Mayflies dance above the water.
 - Swim up fast and Strike near the surface to **leap** out of the water: you get a look at the shore,
   the forest and the sky, and can snap mayflies in mid-air.
@@ -62,6 +81,9 @@ downloaded models or textures.
   draws straight to the screen at pixel ratio 1. Touch devices start on Low. On High, if the first 3 s of play
   average under 40 fps and you never picked a quality, the game drops to Low by itself. Resolution also drops step by
   step on devices that stay slow.
+- **Start-up:** "Filling the lake…" builds the scene and compiles its shaders before play starts, so the first
+  seconds of a life do not stutter. Plants and other repeated objects too far away to see through the water are
+  not drawn.
 - **Debug HUD:** add `?debug=1` to the URL to see fps, draw calls and the current quality next to the clock
   (and press `T` to fast-forward time).
 

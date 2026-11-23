@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSaveStore } from "../src/ui/storage";
+import { slotStore, slotKey } from "../src/ui/slots";
+import { persistDeath, persistNewLife } from "../src/ui/policy";
 
 function fakeStorage(opts: { throwOnSet?: boolean } = {}): Storage {
   const m = new Map<string, string>();
@@ -54,5 +56,25 @@ describe("save store", () => {
     expect(s.clearRewind()).toBe(true);
     expect(s.loadRewind()).toBeNull();
     expect(s.load()).toBe("a");
+  });
+});
+
+describe("slot-scoped save store", () => {
+  it("death persistence on a river slot leaves the lake slots alone", () => {
+    const st = fakeStorage();
+    st.setItem(slotKey("lake", 1), "lake life");
+    const s = slotStore(st, "river", 2);
+    expect(persistNewLife(s, "rewind", "born")).toBe(true);
+    expect(st.getItem(slotKey("river", 2) + ".rewind")).toBe("born");
+    expect(persistDeath(s, "rewind", "dead")).toBe(true);
+    expect(st.getItem(slotKey("river", 2))).toBe("born");
+    expect(persistDeath(s, "permadeath", "dead")).toBe(true);
+    expect(st.getItem(slotKey("river", 2))).toBeNull();
+    expect(st.getItem(slotKey("lake", 1))).toBe("lake life");
+  });
+
+  it("never throws when storage throws", () => {
+    const s = slotStore(fakeStorage({ throwOnSet: true }), "lake", 3);
+    expect(s.save("x")).toBe(false);
   });
 });

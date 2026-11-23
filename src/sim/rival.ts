@@ -114,7 +114,7 @@ export function rivalInput(sim: Simulation, pk: PikeState, dt: number): PikeInpu
       threat = pos;
       threatD = d;
     }
-    if (lengthCm > gape) return;
+    if (lengthCm > gape || id === sim.tyrant?.id) return; // never hunt the game boss
     if (id === ai.targetId) current = { pos, d };
     const score = (isPike ? aggression : 1) * sensed.clarity / (1 + d);
     if (!best || score > best.score) best = { id, pos, d, score };

@@ -153,3 +153,14 @@ describe("arcade restocking", () => {
     }
   }, 30000);
 });
+
+describe("summonAngler", () => {
+  it("pulls the next arrival closer, never later, and uses no sim.rng", () => {
+    const sim = make();
+    sim.extras.anglerIn = 500;
+    sim.extras.summonAngler(20);
+    expect(sim.extras.anglerIn).toBe(20);
+    sim.extras.summonAngler(100);
+    expect(sim.extras.anglerIn).toBe(20);
+  });
+});

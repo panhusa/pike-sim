@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OUTLINE_FRAC, OUTLINE_LAYER, outlineMaterial } from "./outline";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { RenderCtx } from "./ctx";
+import { GridCull, InstanceCull, type CullView } from "./cull";
 import { lakebedColor, lakebedFragmentPars, lakebedNormal, lakebedVertex, lakebedVertexPars } from "./shaders/lakebed.glsl";
 import { applyCaustics, applyWater } from "./water";
 
@@ -76,8 +77,11 @@ function logGeometry(radius: number, length: number, rng: () => number): THREE.B
   return merged;
 }
 
-/** Lakebed (vertex colours by depth and slope, fbm detail in the shader), stones, logs and leaf litter. */
-export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
+/**
+ * Lakebed (vertex colours by depth and slope, fbm detail in the shader), stones, logs and leaf litter.
+ * `update` cuts the bed grid, stones and litter down to what the water's absorption leaves visible (fogCullRadius).
+ */
+export function buildTerrain(ctx: RenderCtx): { update(view: CullView): void; dispose(): void } {
   const w = ctx.sim.world;
   const low = ctx.gfx.quality === "low";
   const geos: THREE.BufferGeometry[] = [];
@@ -143,7 +147,10 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
       .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>${lakebedNormal}`);
   };
   finish(bedMat);
-  add(new THREE.Mesh(g, bedMat));
+  const bed = new THREE.Mesh(g, bedMat);
+  bed.name = "lakebed";
+  add(bed);
+  const culls: Array<{ update(v: CullView): void }> = [new GridCull(g, w.size, seg)];
 
   // Stones: three variants, denser in the shallows.
   const stoneCount = Math.round((low ? 300 : 600) * Math.min(3, w.areaMul));
@@ -179,7 +186,10 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
       im.setColorAt(i, tint);
     });
     im.instanceMatrix.needsUpdate = true;
+    im.name = "stones";
+    im.frustumCulled = false; // InstanceCull changes the instance set; a cached bounding sphere would go stale
     add(im);
+    culls.push(new InstanceCull(im, 0.5));
   });
 
   // Sunken logs.
@@ -230,7 +240,15 @@ export function buildTerrain(ctx: RenderCtx): { dispose(): void } {
   }
   litter.count = n;
   litter.instanceMatrix.needsUpdate = true;
+  litter.name = "leaf litter";
+  litter.frustumCulled = false;
   add(litter);
+  culls.push(new InstanceCull(litter, 0.2));
 
-  return { dispose };
+  return {
+    update(view) {
+      for (const c of culls) c.update(view);
+    },
+    dispose,
+  };
 }

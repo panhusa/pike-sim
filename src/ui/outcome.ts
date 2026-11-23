@@ -40,3 +40,15 @@ export class BurstOutcomes {
     );
   }
 }
+
+/** One decimal under 10 (judged on the value rounded to 0.1, so 9.96 prints as 10), else a whole number. */
+function amount(v: number): string {
+  const r = Math.round(v * 10) / 10;
+  return r < 10 ? r.toFixed(1) : String(Math.round(v));
+}
+
+/** "Caught a ..." line: small fish (a larva's prey) keep one decimal; a weight that rounds below 0.1 g is left out. */
+export function catchText(name: string, lengthCm: number, grams: number): string {
+  const g = Math.round(grams * 10) / 10 >= 0.1 ? ` (+${amount(grams)} g)` : "";
+  return `Caught a ${name} ${amount(lengthCm)} cm${g}`;
+}

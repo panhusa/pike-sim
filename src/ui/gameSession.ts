@@ -3,6 +3,8 @@
  * events and per-frame state. main.ts calls enter / event / frame / death.
  */
 import { Challenges } from "../game/challenges";
+import { TRIALS } from "../game/trials";
+import { TyrantCaller } from "../game/tyrantCall";
 import { DANGER, DangerClock } from "../game/danger";
 import { COMBO_MAX, Score, stageOf, STAGES } from "../game/score";
 import type { PikeState } from "../sim/pike";
@@ -15,6 +17,8 @@ export const heartsOf = (health: number): number => Math.max(0, Math.min(3, Math
 
 const BEST_KEY = "pike.best.v1";
 const HOOK_BONUS = 1500;
+/** small bonus for slipping a heron or an otter (the goals pay more when they are current) */
+const DODGE_BONUS = 300;
 const HIT_STOP_S = 0.09;
 const HIT_STOP_SCALE = 0.15;
 
@@ -23,6 +27,9 @@ interface Projector {
   camera: { fov: number; updateProjectionMatrix(): void };
   baseFov: number;
 }
+
+/** a catch within this long after hiding still in cover counts as an ambush */
+const AMBUSH_WINDOW_S = 2.5;
 
 export class GameSession {
   readonly audio = new GameAudio();
@@ -37,9 +44,20 @@ export class GameSession {
   authority = true;
   /** pike hunting us, known from events (guests have no sim.hunter) */
   private hunterId: number | null = null;
+  /** the heron stalking us, known from events: its stab reads "Speared!", not "Bitten!" */
+  private heronId: number | null = null;
+  /** the otter chasing us, known from events */
+  private otterId: number | null = null;
+  /** the Old Tyrant after us, known from events */
+  private tyrantId: number | null = null;
+  /** host: calls the tyrant for every human (host or guest) growing into stage 8 */
+  private tyrants = new TyrantCaller();
+  private tyrantSim: Simulation | null = null;
   private playT = 0;
   /** the first leap of a life gets a hint banner */
   private leapt = false;
+  /** last play time the player was hidden still in cover (ambush trial) */
+  private hiddenT = -99;
 
   constructor(canvas: HTMLElement) {
     this.juice = new Juice(canvas);
@@ -57,7 +75,16 @@ export class GameSession {
     this.danger = new DangerClock();
     this.playT = 0;
     this.hunterId = null;
+    this.tyrantId = null;
+    this.heronId = null;
+    this.otterId = null;
     this.leapt = false;
+    this.hiddenT = -99;
+    // a different water or save slot: pike ids restart, so forget the stages seen in the last one
+    if (sim !== this.tyrantSim) {
+      this.tyrants = new TyrantCaller();
+      this.tyrantSim = sim;
+    }
     const pl = sim.player();
     this.stageIndex = pl ? stageOf(pl.lengthCm).index : 0;
     this.juice.clear();
@@ -84,13 +111,23 @@ export class GameSession {
         const at = this.screenAt(view, pl);
         this.juice.floatText(`+${points}`, at.x, at.y - 30, mult > 1 ? "combo" : "");
         if (mult > 1) this.juice.floatText(`COMBO x${mult}`, at.x, at.y - 70, "combo");
-        this.goal(this.goals.push({ type: "catch", kind: e.kind, lengthCm: e.lengthCm, t: this.playT }));
+        this.goal(
+          this.goals.push({
+            type: "catch",
+            kind: e.kind,
+            lengthCm: e.lengthCm,
+            t: this.playT,
+            airborne: sim.airborne.has(pl.id),
+            ambush: this.playT - this.hiddenT <= AMBUSH_WINDOW_S,
+          }),
+        );
         return;
       }
       case "miss":
       case "strike-empty":
         if (e.pikeId !== pl.id) return;
         if (e.type === "miss" && e.reason === "full") return;
+        this.goal(this.goals.push({ type: "miss" }));
         this.audio.miss();
         {
           const at = this.screenAt(view, pl);
@@ -103,9 +140,49 @@ export class GameSession {
         this.audio.bitten();
         this.juice.flash("rgba(220,30,30,.55)");
         this.juice.shake(14, 0.45);
-        this.juice.showBanner("Bitten!", left <= 1 ? "One more bite and you're done. Get away!" : `${left} hearts left. Burst away!`, "danger", 2200);
+        const speared = e.byPikeId === this.heronId;
+        const pike = !speared && e.byPikeId !== this.otterId; // heron and otter hits are "hits", not bites
+        this.juice.showBanner(speared ? "Speared!" : "Bitten!", left <= 1 ? `One more ${pike ? "bite" : "hit"} and you're done. Get away!` : `${left} hearts left. Burst away!`, "danger", 2200);
         return;
       }
+      case "scared":
+        if (e.pikeId !== pl.id) return;
+        this.score.breakCombo();
+        this.audio.bitten();
+        this.juice.flash("rgba(120,110,120,.55)");
+        this.juice.shake(8, 0.3);
+        this.juice.showBanner("Chased off!", "It got you. In Chill nothing hurts, but your combo is gone", "danger", 2600);
+        return;
+      case "heron-warn":
+        if (e.pikeId !== pl.id) return;
+        this.heronId = e.heronId;
+        this.audio.warning();
+        this.juice.showBanner("A shadow overhead!", "Heron! Swim away", "danger", 2200);
+        return;
+      case "heron-stab":
+        if (e.pikeId !== pl.id) return;
+        this.audio.stab();
+        this.juice.shake(e.hit ? 10 : 5, 0.3);
+        return;
+      case "heron-dodged":
+        if (e.pikeId !== pl.id) return;
+        this.dodged("Missed you!", this.goals.push({ type: "heron-dodged" }));
+        return;
+      case "otter-start":
+        if (e.pikeId !== pl.id) return;
+        this.otterId = e.otterId;
+        this.audio.otterWarning();
+        this.juice.showBanner("An otter is in the water!", "Hide still in the weeds or outswim it", "danger", 3500);
+        this.juice.shake(4, 0.4);
+        return;
+      case "otter-lost":
+        if (e.pikeId !== pl.id) return;
+        this.dodged("The otter lost you!", this.goals.push({ type: "otter-lost" }));
+        return;
+      case "otter-end":
+        if (e.pikeId !== pl.id) return;
+        if (e.outcome === "timeout") this.juice.showBanner("The otter gave up", "", "", 2500);
+        return;
       case "hunter-start":
         if (e.targetId !== pl.id) return;
         this.hunterId = e.hunterId;
@@ -123,6 +200,35 @@ export class GameSession {
           this.goal(this.goals.push({ type: "hunter-survived" }));
         }
         return;
+      case "tyrant-start":
+        if (e.targetId !== pl.id) return;
+        this.tyrantId = e.tyrantId;
+        this.audio.warning();
+        this.juice.showBanner("The Old Tyrant rules this water", "Bite it 3 times to drive it off", "danger", 4000);
+        this.juice.shake(6, 0.5);
+        return;
+      case "tyrant-hit": {
+        if (e.tyrantId !== this.tyrantId) return;
+        const tk = sim.pikes.find((k) => k.id === e.tyrantId);
+        const at = this.screenAt(view, tk ?? pl);
+        this.juice.floatText(`HIT! ${e.hp} left`, at.x, at.y - 30, "combo");
+        this.juice.shake(8, 0.3);
+        return;
+      }
+      case "tyrant-end": {
+        if (e.targetId !== pl.id) return;
+        this.tyrantId = null;
+        if (e.outcome === "beaten") {
+          const done = this.goals.push({ type: "tyrant-beaten" });
+          if (done) this.goal(done);
+          else {
+            this.audio.fanfare();
+            this.juice.showBanner("You drove off the Old Tyrant!", "This water is yours now", "good", 3500);
+          }
+          this.juice.flash("rgba(127,232,180,.45)");
+        } else if (e.outcome === "left") this.juice.showBanner("The Old Tyrant swam away", "It will be back", "", 3000);
+        return;
+      }
       case "leap":
         if (e.pikeId !== pl.id) return;
         this.audio.leap();
@@ -166,11 +272,29 @@ export class GameSession {
     }
   }
 
+  /** Only the newest stage's trial runs (a jump over several stages does not stack). */
+  private startStageTrial(sim: Simulation, pl: PikeState, index: number): void {
+    const t = TRIALS[index];
+    if (t) this.goals.startTrial(t);
+    if (index === 9) this.juice.showBanner("You are a Legend of the lake", "", "good", 4500);
+    if (!this.authority) return;
+    if (index === 5) this.danger.hunterWithin(10);
+    if (index === 7) sim.extras.summonAngler(20);
+  }
+
+  /** Slipped a heron or an otter: a small bonus, or the goal's banner when that completed one. */
+  private dodged(title: string, done: ReturnType<Challenges["push"]>): void {
+    this.score.bonus(DODGE_BONUS);
+    if (done) return this.goal(done);
+    this.audio.fanfare();
+    this.juice.showBanner(title, `+${DODGE_BONUS}`, "good", 2500);
+  }
+
   private goal(done: ReturnType<Challenges["push"]>): void {
     if (!done) return;
     this.score.bonus(done.bonus);
     this.audio.fanfare();
-    this.juice.showBanner("Goal complete!", `${done.text}  +${done.bonus}`, "good");
+    this.juice.showBanner(done.trial ? "Trial complete!" : "Goal complete!", `${done.text}  +${done.bonus}`, "good");
   }
 
   private screenAt(view: Projector, pl: PikeState): { x: number; y: number } {
@@ -182,9 +306,11 @@ export class GameSession {
   frame(dt: number, sim: Simulation, pl: PikeState, view: Projector, playing: boolean): void {
     let danger01 = 0;
     let speed01 = 0;
+    if (this.authority && playing) this.tyrants.tick(sim);
     if (playing && pl.alive) {
       this.playT += dt;
-      if (this.authority && !sim.chill && this.danger.tick(dt, sim.hunter !== null)) {
+      // no hunter while the tyrant fight is on, or a heron or an otter is after someone
+      if (this.authority && this.danger.tick(dt, sim.hunter !== null || sim.tyrant !== null || sim.extras.heron !== null || sim.extras.otter !== null, pl.lengthCm)) {
         // in a shared lake the hunter picks any human player
         const humans = sim.pikes.filter((k) => k.alive && sim.isHuman(k));
         const target = humans[Math.floor(Math.random() * humans.length)];
@@ -198,8 +324,18 @@ export class GameSession {
         danger01 = h.lostS > 0 ? 0.3 : 0.35 + 0.65 * near;
         this.audio.heartbeat(true, near);
       }
+      // an otter after us, or a heron's shadow overhead
+      const o = sim.extras.otter;
+      if (o && !o.outcome && o.targetId === pl.id) {
+        const near = Math.max(0, Math.min(1, 1 - (Math.hypot(o.pos.x - pl.pos.x, o.pos.y - pl.pos.y, o.pos.z - pl.pos.z) - 1) / 10));
+        danger01 = Math.max(danger01, 0.35 + 0.65 * near);
+        this.audio.heartbeat(true, near);
+      }
+      const hr = sim.extras.heron;
+      if (hr && !hr.struck && hr.targetId === pl.id) danger01 = Math.max(danger01, 0.5 + 0.5 * Math.min(1, hr.t / 2));
       const L = pl.lengthCm / 100;
       speed01 = Math.min(1, pl.speed / (L * 10));
+      if (pl.stillTime >= 1 && sim.world.coverAt(pl.pos) >= 0.35) this.hiddenT = this.playT;
       // growth stage
       const st = stageOf(pl.lengthCm);
       if (st.index > this.stageIndex) {
@@ -208,6 +344,7 @@ export class GameSession {
         this.audio.fanfare();
         this.juice.flash("rgba(127,232,180,.45)");
         this.juice.showBanner(`You are now a ${STAGES[st.index]!.name}!`, `Bigger prey on the menu  +${1000 * st.index}`, "good", 3500);
+        this.startStageTrial(sim, pl, st.index);
       }
     }
     // FOV kick with speed (bursts feel fast)
